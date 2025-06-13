@@ -1,177 +1,233 @@
-# neco-porter
+# 🐱 Neco Porter
 
-A modern application for efficient port management and network service orchestration.
+> Port management service where cats deliver your ports!
 
-## Overview
+<div align="center">
 
-neco-porter is a lightweight, flexible tool designed to simplify port management and network service coordination. Whether you're managing development environments, orchestrating microservices, or handling complex network configurations, neco-porter provides the tools you need.
+```
+  ╱|、
+ (˚ˎ 。7   "Need a port? I'll bring you one!"
+  |、˜〵   
+  じしˍ,)ノ
+```
+
+[![npm version](https://img.shields.io/npm/v/neco-porter.svg)](https://www.npmjs.com/package/neco-porter)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+</div>
+
+## What is Neco Porter?
+
+A minimal port management service that eliminates "port already in use" errors by having cats deliver available ports to your development processes.
+
+```bash
+$ necoport-client exec web npm run dev
+(=^･ω･^=)  Port 3000 GET!
+```
 
 ## Features
 
-- **Smart Port Management**: Intelligent allocation and management of network ports
-- **Service Discovery**: Automatic detection and registration of services
-- **Configuration Management**: Simple, declarative configuration files
-- **Cross-Platform Support**: Works seamlessly on Linux, macOS, and Windows
-- **API Integration**: RESTful API for programmatic access
-- **Real-time Monitoring**: Live status updates and health checks
-
-## Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/R9a00/neco-porter.git
-cd neco-porter
-
-# Install dependencies (example - adjust based on your tech stack)
-# npm install
-# or
-# pip install -r requirements.txt
-# or
-# go mod download
-```
+- 🐱 **Cat-powered** - Every port comes with a friendly cat
+- 🚀 **Zero conflicts** - Automatic port assignment
+- 🌍 **Universal** - Works with any language or framework
+- 💨 **Lightweight** - Under 100 lines of core logic
+- 🎯 **Dev-only** - Never ships to production
+- 😊 **Joyful** - Makes development more fun
 
 ## Quick Start
 
 ```bash
-# Initialize configuration
-neco-porter init
+# Install
+npm install -g neco-porter
 
-# Start the service
-neco-porter start
+# Start the cat daemon
+necoportd &
 
-# Check status
-neco-porter status
+# Let a cat bring you a port
+necoport-client exec myapp npm run dev
 ```
 
-## Configuration
+## Why Cats?
 
-Create a configuration file `config.yaml` or use environment variables:
+Because development should be fun! Every time you start a service, a cat celebrates your productivity.
 
-```yaml
-# Example configuration
-services:
-  - name: web-service
-    port: 8080
-    health_check: /health
-  
-  - name: api-service
-    port: 8081
-    health_check: /api/health
+Different ports get different cats:
+- `(=^･ω･^=)` - The classic cat
+- `(=^‥^=)` - The content cat  
+- `(=｀ω´=)` - The determined cat
+- `(=･ᴥ･=)` - The friendly cat
+
+## Installation
+
+### npm (Global)
+```bash
+npm install -g neco-porter
+```
+
+### npm (Project)
+```bash
+npm install --save-dev neco-porter
+```
+
+### From Source
+```bash
+git clone https://github.com/R9a00/neco-porter.git
+cd neco-porter
+npm install
+npm link
 ```
 
 ## Usage
 
-### Basic Commands
+### Start the Daemon
 
 ```bash
-# List all managed ports
-neco-porter list
+# Start in foreground
+necoportd
 
-# Add a new service
-neco-porter add <service-name> --port <port-number>
+# Start in background
+necoportd &
 
-# Remove a service
-neco-porter remove <service-name>
-
-# Export configuration
-neco-porter export --format json
+# With custom port range
+NECOPORT_RANGE=8000-8999 necoportd
 ```
 
-### API Usage
+### Run Your Apps
 
 ```bash
-# Get all services
-curl http://localhost:8080/api/services
+# Basic usage
+necoport-client exec myapp npm run dev
 
-# Add a new service
-curl -X POST http://localhost:8080/api/services \
-  -H "Content-Type: application/json" \
-  -d '{"name": "new-service", "port": 8082}'
+# Python app
+necoport-client exec api python app.py
+
+# Ruby app
+necoport-client exec web rails server
+
+# Any command that uses $PORT
+necoport-client exec server ./start.sh
 ```
 
-## Development
-
-### Prerequisites
-
-- [Required runtime/language] version X.X or higher
-- [Any other dependencies]
-
-### Building from Source
+### Other Commands
 
 ```bash
-# Build the project
-make build
+# List all active ports
+necoport-client list
 
-# Run tests
-make test
+# Reserve a port manually
+necoport-client reserve myservice
 
-# Run linter
-make lint
+# Release a port
+necoport-client release myservice
 ```
 
-### Project Structure
+## Integration
 
+### npm scripts
+```json
+{
+  "scripts": {
+    "dev": "necoport-client exec web vite",
+    "api": "necoport-client exec api nodemon server.js",
+    "storybook": "necoport-client exec storybook start-storybook"
+  }
+}
 ```
-neco-porter/
-├── src/              # Source code
-├── tests/            # Test files
-├── docs/             # Documentation
-├── examples/         # Example configurations
-└── scripts/          # Utility scripts
+
+### Node.js API
+```javascript
+import { reserve, release, withPort } from 'neco-porter';
+
+// Reserve a port
+const port = await reserve('myapp');
+console.log(`Got port ${port}!`);
+
+// Use and release
+await withPort('myapp', async (port) => {
+  console.log(`Starting server on port ${port}`);
+  // Your server code here
+});
 ```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NECOPORT_RANGE` | `3000-3999` | Port allocation range |
+| `NECOPORTD_PORT` | `5555` | Daemon listen port |
+| `NECOPORTD_URL` | `http://localhost:5555` | Daemon URL (for client) |
+| `NECOPORT_STATE` | `~/.necoportd.json` | State file location |
+
+## How It Works
+
+1. **necoportd** runs in the background managing port assignments
+2. When you need a port, ask a cat to fetch one
+3. The cat finds a free port and delivers it via `$PORT`
+4. Your app starts with zero conflicts
+5. Ports are automatically released when your app stops
+6. Everyone is happy, especially the cats
+
+## API Reference
+
+### REST API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/reserve` | POST | Reserve a port |
+| `/release` | POST | Release a port |
+| `/heartbeat` | POST | Keep reservation alive |
+| `/list` | GET | List all reservations |
+
+### Node.js Client
+
+```javascript
+// Reserve with hint
+const port = await reserve('web', 3000);
+
+// List all ports
+const ports = await list();
+ports.forEach(p => console.log(`${p.cat} ${p.name} on port ${p.port}`));
+```
+
+## Docker Support
+
+```yaml
+version: '3.8'
+services:
+  necoportd:
+    image: neco-porter:latest
+    ports:
+      - "127.0.0.1:5555:5555"
+    volumes:
+      - ~/.necoportd.json:/data/necoportd.json
+```
+
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| Connection refused | Start necoportd first |
+| No free ports | Increase NECOPORT_RANGE |
+| Port already in use | Check `necoport-client list` |
+| Daemon won't start | Check if port 5555 is free |
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-### Development Workflow
+### Cat ASCII Art Guidelines
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## Testing
-
-```bash
-# Run all tests
-make test
-
-# Run specific test suite
-make test-unit
-make test-integration
-
-# Run with coverage
-make test-coverage
-```
-
-## Documentation
-
-Full documentation is available at [docs/](docs/) or online at [https://neco-porter.readthedocs.io](https://neco-porter.readthedocs.io).
+- Keep them under 20 characters wide
+- Use standard ASCII/Unicode
+- Test in various terminals
+- Ensure they bring joy
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Support
-
-- **Issues**: [GitHub Issues](https://github.com/R9a00/neco-porter/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/R9a00/neco-porter/discussions)
-- **Documentation**: [Online Docs](https://neco-porter.readthedocs.io)
-
-## Roadmap
-
-- [ ] Version 1.0 - Core functionality
-- [ ] Version 1.1 - Enhanced monitoring
-- [ ] Version 1.2 - Kubernetes integration
-- [ ] Version 2.0 - Enterprise features
-
-## Acknowledgments
-
-- Thanks to all contributors who have helped shape neco-porter
-- Special thanks to the open-source community
+MIT - Cats roam free!
 
 ---
 
-Made with ❤️ by the neco-porter team
+<div align="center">
+  <sub>Built with love and paws 🐾</sub>
+</div>

@@ -1,0 +1,51 @@
+# Development files
+.git/
+.gitignore
+.env
+.env.*
+*.log
+.DS_Store
+
+# Test files
+test/
+*.test.js
+coverage/
+.nyc_output/
+
+# Development dependencies
+node_modules/
+.eslintrc*
+.prettierrc*
+
+# Build artifacts
+*.tgz
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor directories
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+Thumbs.db
+
+# State files (don't package user's state)
+.necoportd.json
+~/.necoportd.json
+
+# Documentation source
+docs/
+*.md
+!README.md
+
+# CI/CD
+.github/
+.travis.yml
+.circleci/
+
+# Development scripts
+scripts/
+Makefile

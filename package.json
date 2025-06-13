@@ -1,0 +1,56 @@
+{
+  "name": "neco-porter",
+  "version": "1.0.0",
+  "description": "Port management service where cats deliver your ports! 🐱",
+  "type": "module",
+  "main": "lib/necoport.js",
+  "types": "lib/necoport.d.ts",
+  "bin": {
+    "necoportd": "bin/necoportd",
+    "necoport-client": "bin/necoport-client"
+  },
+  "scripts": {
+    "start": "node src/necoportd.js",
+    "dev": "nodemon src/necoportd.js",
+    "test": "node --test test/*.test.js",
+    "lint": "eslint src/"
+  },
+  "keywords": [
+    "port",
+    "management",
+    "development",
+    "cats",
+    "neko",
+    "devtools",
+    "localhost",
+    "microservices"
+  ],
+  "author": "R9a00",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "get-port": "^7.0.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "nodemon": "^3.0.3"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "lib/",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/R9a00/neco-porter.git"
+  },
+  "bugs": {
+    "url": "https://github.com/R9a00/neco-porter/issues"
+  },
+  "homepage": "https://github.com/R9a00/neco-porter#readme"
+}

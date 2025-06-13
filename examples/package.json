@@ -1,0 +1,14 @@
+{
+  "name": "neco-porter-examples",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Examples for Neco Porter",
+  "scripts": {
+    "basic": "node basic-usage.js",
+    "server": "node express-server.js",
+    "parallel": "node parallel-services.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}

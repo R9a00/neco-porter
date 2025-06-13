@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# necoport-client ── Neco Porter Client with Cats
+# Usage:
+#   necoport-client exec <service-name> <command> [args...]
+# Example:
+#   necoport-client exec web vite
+
+set -euo pipefail
+
+NECOPORTD_URL=${NECOPORTD_URL:-http://localhost:5555}
+
+# Different cats for different occasions
+declare -a success_cats=(
+  "(=^･ω･^=)  Port %s GET!"
+  "(=^‥^=)    Port %s GET!"
+  "(=｀ω´=)   Port %s GET!"
+  "(=･ᴥ･=)    Port %s GET!"
+  "(=˘ω˘=)    Port %s GET!"
+  "(=ΦωΦ=)    Port %s GET!"
+  "(=ﾟωﾟ=)    Port %s GET!"
+)
+
+error_cats=(
+  "(=；ω；=)"
+  "(=TωT=)"
+)
+
+# Check if jq is available
+if ! command -v jq &> /dev/null; then
+  echo "(=；ω；=) jq is required but not installed. Please install jq first."
+  exit 1
+fi
+
+# reserve_port <name> [hint]
+reserve_port() {
+  local name=$1
+  local hint=${2:-0}
+  local response
+  local port
+  
+  # Try to reserve a port
+  response=$(curl -s -X POST "${NECOPORTD_URL}/reserve" \
+          -H 'Content-Type: application/json' \
+          -d "{\"name\":\"${name}\",\"hint\":${hint},\"pid\":$$}" 2>/dev/null || echo '{}')
+  
+  port=$(echo "$response" | jq -r '.port // empty')
+  
+  # Fall back to OS assignment if necoportd is not running
+  if [[ -z "$port" || "$port" == "null" ]]; then
+    echo "(=；ω；=) necoportd not running, using random port..." >&2
+    port=0
+  fi
+  
+  echo "$port"
+}
+
+# release_port <name>
+release_port() {
+  local name=$1
+  curl -s -X POST "${NECOPORTD_URL}/release" \
+       -H 'Content-Type: application/json' \
+       -d "{\"name\":\"${name}\"}" >/dev/null 2>&1 || true
+}
+
+# heartbeat <name>
+send_heartbeat() {
+  local name=$1
+  while true; do
+    sleep 300 # 5 minutes
+    curl -s -X POST "${NECOPORTD_URL}/heartbeat" \
+         -H 'Content-Type: application/json' \
+         -d "{\"name\":\"${name}\"}" >/dev/null 2>&1 || true
+  done
+}
+
+# list_ports
+list_ports() {
+  local response
+  response=$(curl -s "${NECOPORTD_URL}/list" 2>/dev/null || echo '[]')
+  
+  if [[ "$response" == "[]" ]]; then
+    echo "(=；ω；=) No ports reserved or necoportd not running"
+    return
+  fi
+  
+  echo "  ╱|、"
+  echo " (˚ˎ 。7   Active ports:"
+  echo "  |、˜〵"
+  echo "  じしˍ,)ノ"
+  echo ""
+  
+  echo "$response" | jq -r '.[] | "\(.cat) Port \(.port) - \(.name) (PID: \(.pid // "unknown"))"'
+}
+
+# Main entry point
+case "${1:-}" in
+  exec)
+    if [[ $# -lt 3 ]]; then
+      echo "(=･ω･=)? Usage: $0 exec <service-name> <command> [args...]"
+      exit 1
+    fi
+    
+    shift
+    service_name=$1; shift
+    
+    # Reserve a port
+    PORT=$(reserve_port "$service_name")
+    export PORT
+    
+    # Display cat with port
+    if [[ "$PORT" != "0" ]]; then
+      idx=$(( PORT % ${#success_cats[@]} ))
+      printf "${success_cats[$idx]}\n" "$PORT"
+    fi
+    
+    # Start heartbeat in background
+    send_heartbeat "$service_name" &
+    heartbeat_pid=$!
+    
+    # Cleanup function
+    cleanup() {
+      kill $heartbeat_pid 2>/dev/null || true
+      release_port "$service_name"
+      echo ""
+      echo "(=^･ω･^=)ﾉ Port released!"
+    }
+    
+    # Setup cleanup on exit
+    trap cleanup EXIT INT TERM
+    
+    # Execute the command
+    exec "$@"
+    ;;
+    
+  list)
+    list_ports
+    ;;
+    
+  reserve)
+    if [[ $# -lt 2 ]]; then
+      echo "(=･ω･=)? Usage: $0 reserve <service-name> [hint-port]"
+      exit 1
+    fi
+    
+    name=$2
+    hint=${3:-0}
+    port=$(reserve_port "$name" "$hint")
+    
+    if [[ "$port" != "0" ]]; then
+      idx=$(( port % ${#success_cats[@]} ))
+      printf "${success_cats[$idx]}\n" "$port"
+    fi
+    
+    echo "$port"
+    ;;
+    
+  release)
+    if [[ $# -lt 2 ]]; then
+      echo "(=･ω･=)? Usage: $0 release <service-name>"
+      exit 1
+    fi
+    
+    release_port "$2"
+    echo "(=^･ω･^=)ﾉ Port released!"
+    ;;
+    
+  --help|-h|help)
+    cat <<'EOF'
+  ╱|、
+ (˚ˎ 。7   Neco Porter - Port management with cats!
+  |、˜〵   
+  じしˍ,)ノ Usage: necoport-client <command> [args...]
+         
+Commands:
+  exec <name> <cmd> [args...]  Run command with assigned port ($PORT)
+  list                         Show all reserved ports with cats
+  reserve <name> [hint]        Reserve a port manually
+  release <name>               Release a reserved port
+  help                         Show this help message
+  
+Examples:
+  necoport-client exec web npm run dev
+  necoport-client exec api python app.py
+  necoport-client list
+  
+Environment:
+  NECOPORTD_URL               Daemon URL (default: http://localhost:5555)
+  PORT                        Set by exec command for your application
+EOF
+    ;;
+    
+  *)
+    echo "(=･ω･=)? Unknown command: ${1:-none}"
+    echo "Try: $0 --help"
+    exit 1
+    ;;
+esac
