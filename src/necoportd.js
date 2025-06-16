@@ -17,9 +17,9 @@ const leaseDefault = 600; // 10 minutes (cats are patient)
 // Cat ASCII art for logging
 const startupCat = `
   ╱|、
- (˚ˎ 。7  Neco Porter starting...
-  |、˜〵  Preparing to deliver ports!
-  じしˍ,)ノ
+(˚ˎ 。7  Neco Porter starting...
+ |、˜〵  Preparing to deliver ports!
+ じしˍ,)ノ
 `;
 
 // Load state
