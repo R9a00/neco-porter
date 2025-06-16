@@ -180,6 +180,39 @@ npm run lint
 3. Make requested changes in new commits
 4. Once approved, your PR will be merged
 
+## v2 Development Guidelines
+
+### Working with Multi-Port Features
+
+When contributing to v2 features:
+1. Maintain backward compatibility
+2. Test with both v1 and v2 clients
+3. Update TypeScript definitions
+4. Add tests for multi-port scenarios
+
+### Code Organization
+
+- `src/necoportd.js` - v1 daemon (keep unchanged)
+- `src/necoportd-v2.js` - v2 daemon with multi-port support
+- `src/db-utils.js` - Database utilities and migration
+- `lib/necoport.js` - v1 client library
+- `lib/necoport-v2.js` - v2 client library
+- `bin/necoport-client` - v1 CLI (keep unchanged)
+- `bin/necoport-client-v2` - v2 CLI with new features
+
+### Testing v2 Features
+
+```bash
+# Run v2 daemon
+./src/necoportd-v2.js &
+
+# Test multi-port allocation
+./bin/necoport-client-v2 exec test --ports a,b,c bash -c 'env | grep PORT'
+
+# Test backward compatibility
+./bin/necoport-client exec test npm run dev
+```
+
 ## Cat ASCII Art Guidelines
 
 When adding new cat ASCII art:
@@ -187,7 +220,7 @@ When adding new cat ASCII art:
 - Use standard ASCII/Unicode characters
 - Test in various terminals
 - Ensure they bring joy!
-- Add them to the `getCatForPort` function in `src/necoportd.js`
+- Add them to the `getCatForPort` function in `src/necoportd.js` and `src/necoportd-v2.js`
 
 Example:
 ```
