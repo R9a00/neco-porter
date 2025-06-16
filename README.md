@@ -1,6 +1,6 @@
-# 🐱 Neco Porter
+# 🐱 Neco Porter v2
 
-> Port management service where cats deliver your ports!
+> Smart port management where cats deliver all your ports!
 
 <div align="center">
 
@@ -11,7 +11,7 @@
  じしˍ,)ノ
 ```
 
-**"Need a port? I'll bring you one!"**
+**"Just run `neco .` - I'll handle the rest!"**
 
 [![npm version](https://img.shields.io/npm/v/neco-porter.svg)](https://www.npmjs.com/package/neco-porter)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -20,20 +20,25 @@
 
 ## What is Neco Porter?
 
-A minimal port management service that eliminates "port already in use" errors by having cats deliver available ports to your development processes.
+An intelligent port management service that automatically detects your project type and manages ports - no more "port already in use" errors!
 
 ```bash
-$ necoport-client exec web npm run dev
-(=^･ω･^=)  Port 3000 GET!
+# Just this!
+$ cd my-project
+$ neco .
+🔍 Analyzing project...
+🚀 Starting app with managed ports...
 ```
 
 ## Features
 
+- 🧠 **Smart Detection** - Automatically identifies project type and starts it
 - 🐱 **Cat-powered** - Every port comes with a friendly cat
 - 🚀 **Zero conflicts** - Automatic port assignment
+- 🔄 **Multi-port Support** - Manage multiple ports for complex apps
 - 🌍 **Universal** - Works with any language or framework
-- 💨 **Lightweight** - Under 100 lines of core logic
-- 🎯 **Dev-only** - Never ships to production
+- 📦 **No app changes needed** - Works with existing apps
+- 💨 **Lightweight** - Simple and fast
 - 😊 **Joyful** - Makes development more fun
 
 ## Quick Start
@@ -42,12 +47,16 @@ $ necoport-client exec web npm run dev
 # Install
 npm install -g neco-porter
 
-# Start the cat daemon
-necoportd &
-
-# Let a cat bring you a port
-necoport-client exec myapp npm run dev
+# That's it! Just run:
+cd your-project
+neco .
 ```
+
+The `neco` command will:
+1. 🔍 Detect your project type (Node.js, Python, Ruby, etc.)
+2. 📋 Find the right startup command
+3. 🐱 Reserve ports automatically
+4. 🚀 Start your app with zero conflicts!
 
 ## Why Cats?
 
@@ -89,46 +98,44 @@ npm link
 
 ## Usage
 
-### Start the Daemon
+### Basic Usage - Just One Command!
 
 ```bash
-# Start in foreground
-necoportd
+# Auto-detect and start any project
+neco .
 
-# Start in background
-necoportd &
-
-# With custom port range
-NECOPORT_RANGE=8000-8999 necoportd
+# Or specify the command
+neco python app.py
+neco npm run dev
+neco rails server
 ```
 
-### Run Your Apps
+### Multi-Port Applications
 
 ```bash
-# Basic usage
-necoport-client exec myapp npm run dev
+# Using command line options
+neco --ports main:8000,api:8001,websocket:8002 python app.py
 
-# Python app
-necoport-client exec api python app.py
-
-# Ruby app
-necoport-client exec web rails server
-
-# Any command that uses $PORT
-necoport-client exec server ./start.sh
+# Or create .necoport.yaml
+version: 1
+services:
+  app:
+    command: "python app.py"
+    ports:
+      main:
+        hint: 8000
+      api:
+        hint: 8001
 ```
 
-### Other Commands
+### Management Commands
 
 ```bash
-# List all active ports
-necoport-client list
+# Check what's running
+neco status
 
-# Reserve a port manually
-necoport-client reserve myservice
-
-# Release a port
-necoport-client release myservice
+# Stop everything
+neco stop
 ```
 
 ## Integration
@@ -170,12 +177,31 @@ await withPort('myapp', async (port) => {
 
 ## How It Works
 
-1. **necoportd** runs in the background managing port assignments
-2. When you need a port, ask a cat to fetch one
-3. The cat finds a free port and delivers it via `$PORT`
-4. Your app starts with zero conflicts
-5. Ports are automatically released when your app stops
-6. Everyone is happy, especially the cats
+### Auto-Detection Magic
+
+```bash
+$ cd my-django-project
+$ neco .
+🔍 Analyzing project...
+📋 Found: manage.py
+🚀 Running: python manage.py runserver
+```
+
+Neco Porter automatically detects:
+- **Python**: `app.py`, `main.py`, `manage.py`, `requirements.txt`
+- **Node.js**: `package.json` scripts, `server.js`, `index.js`
+- **Ruby**: `Gemfile`, `config.ru`, Rails projects
+- **Go**: `go.mod`, `main.go`
+- **Docker**: `docker-compose.yml`
+- **Make**: `Makefile` with run/start/serve targets
+- **Heroku**: `Procfile`
+
+### Port Management
+
+1. **Auto-assignment**: Finds free ports automatically
+2. **Environment Variables**: Sets `$PORT` (and `$PORT_API`, etc. for multi-port apps)
+3. **No conflicts**: Tracks all ports across all projects
+4. **Auto-cleanup**: Releases ports when your app stops
 
 ## API Reference
 
