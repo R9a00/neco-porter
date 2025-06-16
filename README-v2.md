@@ -5,10 +5,10 @@
 <div align="center">
 
 ```
-    ╱|、
-  (˚ˎ 。7    "Need multiple ports? I'll bring them all!"
-   |、˜〵   
-   じしˍ,)ノ
+  ╱|、
+(˚ˎ 。7   "Need multiple ports? I'll bring them all!"
+ |、˜〵   
+ じしˍ,)ノ
 ```
 
 [![npm version](https://img.shields.io/npm/v/neco-porter.svg)](https://www.npmjs.com/package/neco-porter)
