@@ -57,6 +57,14 @@ Different ports get different cats:
 - `(=｀ω´=)` - The determined cat
 - `(=･ᴥ･=)` - The friendly cat
 
+## Requirements
+
+- Node.js >= 18.0.0
+- jq (required for the CLI client)
+  - macOS: `brew install jq`
+  - Ubuntu/Debian: `sudo apt-get install jq`
+  - Other: [Download jq](https://stedolan.github.io/jq/download/)
+
 ## Installation
 
 ### npm (Global)
@@ -210,6 +218,8 @@ services:
 | No free ports | Increase NECOPORT_RANGE |
 | Port already in use | Check `necoport-client list` |
 | Daemon won't start | Check if port 5555 is free |
+| "jq is required but not installed" | Install jq (see Requirements section) |
+| "necoportd not running, using random port" | Start necoportd daemon first |
 
 ## Contributing
 

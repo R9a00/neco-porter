@@ -1,10 +1,10 @@
-# Contributing to neco-porter
+# Contributing to Neco Porter 🐱
 
-First off, thank you for considering contributing to neco-porter! It's people like you that make neco-porter such a great tool.
+First off, thank you for considering contributing to Neco Porter! Your contributions help make port management more delightful for developers everywhere.
 
 ## Code of Conduct
 
-This project and everyone participating in it is governed by the [neco-porter Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior to [project maintainers].
+This project and everyone participating in it is governed by our commitment to creating a welcoming environment. Be kind, respectful, and constructive in all interactions.
 
 ## How Can I Contribute?
 
@@ -60,12 +60,12 @@ Please follow these steps:
 
 3. **Ensure the test suite passes**
    ```bash
-   make test
+   npm test
    ```
 
 4. **Run the linter**
    ```bash
-   make lint
+   npm run lint
    ```
 
 5. **Commit your changes**
@@ -96,25 +96,26 @@ Please follow these steps:
 
 2. **Install dependencies**
    ```bash
-   # Example - adjust based on the project's tech stack
    npm install
-   # or
-   pip install -r requirements.txt
-   # or
-   go mod download
    ```
 
-3. **Set up your environment**
+3. **Install system dependencies**
    ```bash
-   cp .env.example .env
-   # Edit .env with your local settings
+   # macOS
+   brew install jq
+   
+   # Ubuntu/Debian
+   sudo apt-get install jq
+   
+   # Other systems
+   # Visit https://stedolan.github.io/jq/download/
    ```
 
-4. **Run the development server**
+4. **Run the development daemon**
    ```bash
-   make dev
-   # or
    npm run dev
+   # or
+   ./bin/necoportd
    ```
 
 ## Style Guidelines
@@ -163,13 +164,13 @@ Fixes #123
 
 ```bash
 # Run all tests
-make test
+npm test
 
 # Run specific test file
-make test TEST=test_specific.py
+node --test test/necoportd.test.js
 
-# Run with coverage
-make test-coverage
+# Run linter
+npm run lint
 ```
 
 ## Review Process
@@ -179,21 +180,36 @@ make test-coverage
 3. Make requested changes in new commits
 4. Once approved, your PR will be merged
 
+## Cat ASCII Art Guidelines
+
+When adding new cat ASCII art:
+- Keep them under 20 characters wide
+- Use standard ASCII/Unicode characters
+- Test in various terminals
+- Ensure they bring joy!
+- Add them to the `getCatForPort` function in `src/necoportd.js`
+
+Example:
+```
+(=^･ω･^=)  # Classic cat
+(=^‥^=)    # Content cat
+(=｀ω´=)   # Determined cat
+```
+
 ## Community
 
-- Join our [Discord/Slack/Forum]
-- Follow our [Twitter/Blog]
-- Participate in discussions
+- Report issues on [GitHub Issues](https://github.com/R9a00/neco-porter/issues)
+- Discuss features in [GitHub Discussions](https://github.com/R9a00/neco-porter/discussions)
 
 ## Recognition
 
 Contributors will be recognized in:
 - The project README
 - Release notes
-- Our website
+- Git commit history
 
 ## Questions?
 
-Feel free to open an issue with your question or reach out to the maintainers directly.
+Feel free to open an issue with your question!
 
-Thank you for contributing to neco-porter! 🎉
+Thank you for contributing to Neco Porter! 🐱✨
