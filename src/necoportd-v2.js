@@ -22,10 +22,10 @@ const leaseDefault = 600; // 10 minutes (cats are patient)
 
 // Cat ASCII art for logging
 const startupCat = `
-  ╱|、
- (˚ˎ 。7  Neco Porter v2 starting...
-  |、˜〵  Now with multi-port support!
-  じしˍ,)ノ
+    ╱|、
+  (˚ˎ 。7    Neco Porter v2 starting...
+   |、˜〵    Now with multi-port support!
+   じしˍ,)ノ
 `;
 
 // Load and migrate state
