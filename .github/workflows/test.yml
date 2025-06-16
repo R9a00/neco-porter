@@ -1,0 +1,73 @@
+name: Test
+
+on:
+  push:
+    branches: [ main, develop, 'feature/**' ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x, 22.x]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+    
+    - name: Install dependencies
+      run: |
+        npm ci
+        sudo apt-get update
+        sudo apt-get install -y jq
+    
+    - name: Run linter
+      run: npm run lint
+    
+    - name: Run tests
+      run: npm test
+    
+    - name: Test CLI commands
+      run: |
+        # Start daemon in background
+        ./bin/necoportd &
+        DAEMON_PID=$!
+        sleep 2
+        
+        # Test basic commands
+        ./bin/necoport-client list
+        ./bin/necoport-client reserve test-ci
+        ./bin/necoport-client release test-ci
+        
+        # Cleanup
+        kill $DAEMON_PID || true
+
+  compatibility:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/heads/feature/v2')
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+    
+    - name: Install dependencies
+      run: |
+        npm ci
+        sudo apt-get update
+        sudo apt-get install -y jq
+    
+    - name: Test v1 compatibility
+      run: |
+        # This will be expanded with v2 compatibility tests
+        echo "v1 compatibility tests will be added here"

@@ -1,0 +1,363 @@
+#!/usr/bin/env bash
+# necoport-client v2 ── Multi-port support for Neco Porter
+# Usage:
+#   necoport-client exec <service-name> [options] <command> [args...]
+#   necoport-client exec myapp --ports main,api,metrics npm run dev
+#   necoport-client exec myapp --count 3 python app.py
+
+set -euo pipefail
+
+NECOPORTD_URL=${NECOPORTD_URL:-http://localhost:5555}
+
+# Different cats for different occasions
+declare -a success_cats=(
+  "(=^･ω･^=)  Ports GET!"
+  "(=^‥^=)    Ports GET!"
+  "(=｀ω´=)   Ports GET!"
+  "(=･ᴥ･=)    Ports GET!"
+  "(=˘ω˘=)    Ports GET!"
+  "(=ΦωΦ=)    Ports GET!"
+  "(=ﾟωﾟ=)    Ports GET!"
+)
+
+error_cats=(
+  "(=；ω；=)"
+  "(=TωT=)"
+)
+
+# Check if jq is available
+if ! command -v jq &> /dev/null; then
+  echo "(=；ω；=) jq is required but not installed. Please install jq first."
+  exit 1
+fi
+
+# Parse port options
+parse_port_options() {
+  local ports_arg="$1"
+  local -n result=$2
+  
+  # Split by comma
+  IFS=',' read -ra port_specs <<< "$ports_arg"
+  
+  for spec in "${port_specs[@]}"; do
+    # Check if hint is provided (name:hint format)
+    if [[ "$spec" =~ ^([^:]+):([0-9]+)$ ]]; then
+      local name="${BASH_REMATCH[1]}"
+      local hint="${BASH_REMATCH[2]}"
+      result["$name"]="$hint"
+    else
+      result["$spec"]="0"
+    fi
+  done
+}
+
+# Build JSON for port reservation
+build_ports_json() {
+  local -n ports=$1
+  local json="{"
+  local first=true
+  
+  for name in "${!ports[@]}"; do
+    if [[ "$first" == true ]]; then
+      first=false
+    else
+      json+=","
+    fi
+    json+="\"$name\":{\"hint\":${ports[$name]}}"
+  done
+  
+  json+="}"
+  echo "$json"
+}
+
+# Reserve multiple ports
+reserve_multi_ports() {
+  local name=$1
+  local body=$2
+  local response
+  local ports_json
+  
+  # Try to reserve ports
+  response=$(curl -s -X POST "${NECOPORTD_URL}/reserve" \
+          -H 'Content-Type: application/json' \
+          -d "${body}" 2>/dev/null || echo '{}')
+  
+  # Check if we got ports
+  ports_json=$(echo "$response" | jq -r '.ports // empty')
+  
+  if [[ -z "$ports_json" || "$ports_json" == "null" ]]; then
+    # Try single port for backward compatibility
+    local port=$(echo "$response" | jq -r '.port // empty')
+    if [[ -n "$port" && "$port" != "null" ]]; then
+      echo "{\"main\":$port}"
+    else
+      echo "(=；ω；=) necoportd not running or incompatible version" >&2
+      echo "{}"
+    fi
+  else
+    echo "$ports_json"
+  fi
+}
+
+# Release ports
+release_ports() {
+  local name=$1
+  curl -s -X POST "${NECOPORTD_URL}/release" \
+       -H 'Content-Type: application/json' \
+       -d "{\"name\":\"${name}\"}" >/dev/null 2>&1 || true
+}
+
+# Heartbeat sender
+send_heartbeat() {
+  local name=$1
+  while true; do
+    sleep 300 # 5 minutes
+    curl -s -X POST "${NECOPORTD_URL}/heartbeat" \
+         -H 'Content-Type: application/json' \
+         -d "{\"name\":\"${name}\"}" >/dev/null 2>&1 || true
+  done
+}
+
+# Export port environment variables
+export_port_vars() {
+  local ports_json=$1
+  local port_names=($(echo "$ports_json" | jq -r 'keys[]' 2>/dev/null))
+  
+  # Always set PORT to the first/main port for v1 compatibility
+  local main_port=$(echo "$ports_json" | jq -r '.main // .["'${port_names[0]}'"] // 0')
+  export PORT="$main_port"
+  
+  # Set individual port variables
+  for port_name in "${port_names[@]}"; do
+    local port_value=$(echo "$ports_json" | jq -r ".\"$port_name\"")
+    if [[ "$port_name" != "main" ]]; then
+      # Convert to uppercase and replace non-alphanumeric with underscore
+      local var_name="PORT_$(echo "$port_name" | tr '[:lower:]' '[:upper:]' | tr -c '[:alnum:]' '_')"
+      export "$var_name=$port_value"
+      echo "  $var_name=$port_value" >&2
+    fi
+  done
+  
+  echo "  PORT=$main_port" >&2
+}
+
+# List ports with v2 information
+list_ports_v2() {
+  local response
+  response=$(curl -s "${NECOPORTD_URL}/list" 2>/dev/null || echo '[]')
+  
+  if [[ "$response" == "[]" ]]; then
+    echo "(=；ω；=) No ports reserved or necoportd not running"
+    return
+  fi
+  
+  echo "  ╱|、"
+  echo " (˚ˎ 。7   Active ports:"
+  echo "  |、˜〵"
+  echo "  じしˍ,)ノ"
+  echo ""
+  
+  # Show v2 format if available
+  echo "$response" | jq -r '.[] | 
+    if .ports then
+      "\(.cat) \(.name):\n" + 
+      (.ports | to_entries | map("    \(.key): \(.value)") | join("\n"))
+    else
+      "\(.cat) Port \(.port) - \(.name) (PID: \(.pid // "unknown"))"
+    end'
+}
+
+# Main entry point
+case "${1:-}" in
+  exec)
+    shift
+    if [[ $# -lt 2 ]]; then
+      echo "(=･ω･=)? Usage: $0 exec <service-name> [options] <command> [args...]"
+      echo "Options:"
+      echo "  --ports name1,name2,name3    Reserve named ports"
+      echo "  --ports name1:3000,name2     Reserve with hints"
+      echo "  --count N                    Reserve N ports"
+      exit 1
+    fi
+    
+    service_name=$1; shift
+    declare -A port_hints
+    port_count=0
+    
+    # Parse options
+    while [[ $# -gt 0 && "$1" == --* ]]; do
+      case "$1" in
+        --ports)
+          parse_port_options "$2" port_hints
+          shift 2
+          ;;
+        --count)
+          port_count=$2
+          shift 2
+          ;;
+        *)
+          echo "(=･ω･=)? Unknown option: $1"
+          exit 1
+          ;;
+      esac
+    done
+    
+    # Build request body
+    if [[ ${#port_hints[@]} -gt 0 ]]; then
+      ports_json=$(build_ports_json port_hints)
+      body="{\"name\":\"$service_name\",\"pid\":$$,\"ports\":$ports_json}"
+    elif [[ $port_count -gt 0 ]]; then
+      body="{\"name\":\"$service_name\",\"pid\":$$,\"count\":$port_count}"
+    else
+      # v1 compatibility mode
+      body="{\"name\":\"$service_name\",\"pid\":$$}"
+    fi
+    
+    # Reserve ports
+    ports_result=$(reserve_multi_ports "$service_name" "$body")
+    
+    # Export environment variables
+    if [[ "$ports_result" != "{}" ]]; then
+      echo "$(printf "%s" "${success_cats[$RANDOM % ${#success_cats[@]}]}")" >&2
+      export_port_vars "$ports_result"
+    fi
+    
+    # Start heartbeat in background
+    send_heartbeat "$service_name" &
+    heartbeat_pid=$!
+    
+    # Cleanup function
+    cleanup() {
+      kill $heartbeat_pid 2>/dev/null || true
+      release_ports "$service_name"
+      echo ""
+      echo "(=^･ω･^=)ﾉ Ports released!"
+    }
+    
+    # Setup cleanup on exit
+    trap cleanup EXIT INT TERM
+    
+    # Execute the command
+    exec "$@"
+    ;;
+    
+  list)
+    list_ports_v2
+    ;;
+    
+  reserve)
+    if [[ $# -lt 2 ]]; then
+      echo "(=･ω･=)? Usage: $0 reserve <service-name> [--ports names] [--count N]"
+      exit 1
+    fi
+    
+    shift
+    service_name=$1; shift
+    declare -A port_hints
+    port_count=0
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --ports)
+          parse_port_options "$2" port_hints
+          shift 2
+          ;;
+        --count)
+          port_count=$2
+          shift 2
+          ;;
+        *)
+          # v1 compatibility - treat as hint
+          port_hints["main"]=$1
+          shift
+          ;;
+      esac
+    done
+    
+    # Build request body
+    if [[ ${#port_hints[@]} -gt 0 ]]; then
+      ports_json=$(build_ports_json port_hints)
+      body="{\"name\":\"$service_name\",\"pid\":$$,\"ports\":$ports_json}"
+    elif [[ $port_count -gt 0 ]]; then
+      body="{\"name\":\"$service_name\",\"pid\":$$,\"count\":$port_count}"
+    else
+      body="{\"name\":\"$service_name\",\"pid\":$$}"
+    fi
+    
+    # Reserve and display
+    ports_result=$(reserve_multi_ports "$service_name" "$body")
+    
+    if [[ "$ports_result" != "{}" ]]; then
+      echo "$(printf "%s" "${success_cats[$RANDOM % ${#success_cats[@]}]}")"
+      echo "$ports_result" | jq -r 'to_entries | .[] | "\(.key): \(.value)"'
+    fi
+    ;;
+    
+  release)
+    if [[ $# -lt 2 ]]; then
+      echo "(=･ω･=)? Usage: $0 release <service-name> [port-name]"
+      exit 1
+    fi
+    
+    service_name=$2
+    port_name=${3:-}
+    
+    if [[ -n "$port_name" ]]; then
+      curl -s -X POST "${NECOPORTD_URL}/release" \
+           -H 'Content-Type: application/json' \
+           -d "{\"name\":\"$service_name\",\"portName\":\"$port_name\"}" >/dev/null 2>&1 || true
+      echo "(=^･ω･^=)ﾉ Port $port_name released!"
+    else
+      release_ports "$service_name"
+      echo "(=^･ω･^=)ﾉ All ports released!"
+    fi
+    ;;
+    
+  --help|-h|help)
+    cat <<'EOF'
+  ╱|、
+ (˚ˎ 。7   Neco Porter v2 - Multi-port management with cats!
+  |、˜〵   
+  じしˍ,)ノ Usage: necoport-client <command> [args...]
+         
+Commands:
+  exec <name> [opts] <cmd>     Run command with assigned ports
+  list                         Show all reserved ports
+  reserve <name> [opts]        Reserve ports manually
+  release <name> [port]        Release reserved ports
+  help                         Show this help message
+  
+Options for exec/reserve:
+  --ports name1,name2          Reserve named ports
+  --ports name1:3000,name2     Reserve with port hints
+  --count N                    Reserve N numbered ports
+  
+Examples:
+  # Single port (v1 compatible)
+  necoport-client exec web npm run dev
+  
+  # Multiple named ports
+  necoport-client exec myapp --ports main,api,metrics npm start
+  
+  # With port hints
+  necoport-client exec myapp --ports web:3000,api:8080 npm start
+  
+  # Count-based
+  necoport-client exec myapp --count 3 python app.py
+  
+Environment Variables Set:
+  PORT                         Main/first port (always set)
+  PORT_<NAME>                  Additional named ports (uppercase)
+  
+Environment:
+  NECOPORTD_URL               Daemon URL (default: http://localhost:5555)
+EOF
+    ;;
+    
+  *)
+    echo "(=･ω･=)? Unknown command: ${1:-none}"
+    echo "Try: $0 --help"
+    exit 1
+    ;;
+esac
