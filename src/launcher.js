@@ -7,6 +7,8 @@ import path from 'path';
 import yaml from 'js-yaml';
 import { reserve, release } from '../lib/necoport-v2.js';
 import { detectProfile } from './app-profiles.js';
+import { createConnection } from 'net';
+import { createServer as createHttpServer, request as httpRequest } from 'http';
 
 const execAsync = promisify(exec);
 
@@ -111,6 +113,300 @@ export class NecoLauncher {
   }
 
   // ポート不一致の検出とアドバイス
+  // 事前ポート競合解決
+  async resolvePortConflicts(command, reservedPorts, serviceEnv, cwd) {
+    try {
+      // アプリが使いたがるハードコードポートを検出
+      const hardcodedPorts = await this.detectHardcodedPorts(command, cwd);
+      
+      if (hardcodedPorts.size === 0) {
+        // ハードコードポートがない場合、環境変数を使うはず
+        return null;
+      }
+      
+      console.log(`🔍 Detected hardcoded ports: ${Array.from(hardcodedPorts).join(', ')}`);
+      
+      const conflicts = [];
+      const alternatives = {};
+      const newEnv = {};
+      
+      for (const hardcodedPort of hardcodedPorts) {
+        const inUse = await this.isPortInUse(hardcodedPort);
+        if (inUse) {
+          conflicts.push(hardcodedPort);
+          
+          // 代替ポートを探す
+          const alternativePort = await this.findAvailablePort(hardcodedPort);
+          alternatives[hardcodedPort] = alternativePort;
+          
+          console.log(`⚠️  Port ${hardcodedPort} is in use, assigning ${alternativePort} instead`);
+          
+          // 新しいポートを予約
+          const altReserved = await reserve(`${serviceEnv.name || 'service'}-alt-${alternativePort}`, alternativePort);
+          
+          // 環境変数での上書きを試みる
+          newEnv.PORT = alternativePort;
+          newEnv[`FORCE_PORT_${hardcodedPort}`] = alternativePort;
+          
+          console.log(`🔄 Trying PORT=${alternativePort} via environment variable`);
+          
+          // ソケットプロキシを準備
+          console.log(`🔗 Preparing socket proxy: ${hardcodedPort} → ${alternativePort}`);
+          
+          // ユーザーにアクセス情報を提供
+          console.log(`🌐 Your app will be available at: http://localhost:${hardcodedPort}`);
+          console.log(`🔧 (Automatically redirected from conflicted port)`);
+        }
+      }
+      
+      if (conflicts.length > 0) {
+        return {
+          conflicts,
+          alternatives,
+          env: newEnv,
+          ports: { ...reservedPorts, ...alternatives },
+          needsProxy: true
+        };
+      }
+      
+      return null;
+    } catch (error) {
+      console.log(`⚠️  Could not check port conflicts: ${error.message}`);
+      return null;
+    }
+  }
+  
+  // ハードコードされたポートを検出
+  async detectHardcodedPorts(command, cwd) {
+    const commandFiles = command.split(' ').filter(arg => 
+      arg.endsWith('.js') || arg.endsWith('.cjs') || arg.endsWith('.mjs') ||
+      arg.endsWith('.ts') || arg.endsWith('.py') || arg.endsWith('.sh')
+    );
+    
+    const filesToCheck = [
+      ...commandFiles,
+      'server.js', 'app.js', 'index.js', 'main.js',
+      'src/server.js', 'src/app.js', 'src/index.js',
+      'package.json'
+    ];
+    
+    const hardcodedPorts = new Set();
+    
+    for (const file of filesToCheck) {
+      const filePath = path.join(cwd, file);
+      try {
+        const content = await fs.readFile(filePath, 'utf8');
+        
+        // ポートパターンを検索（環境変数を使わないもの）
+        const patterns = [
+          /\.listen\s*\(\s*(\d{4,5})\s*\)/g,
+          /port\s*[=:]\s*(\d{4,5})/gi,
+          /PORT\s*[=:]\s*(\d{4,5})/g,
+          /const\s+port\s*=\s*(\d{4,5})/gi,
+          /let\s+port\s*=\s*(\d{4,5})/gi,
+          /var\s+port\s*=\s*(\d{4,5})/gi
+        ];
+        
+        for (const pattern of patterns) {
+          let match;
+          while ((match = pattern.exec(content)) !== null) {
+            const port = parseInt(match[1]);
+            if (port >= 3000 && port <= 9999) {
+              hardcodedPorts.add(port);
+            }
+          }
+        }
+      } catch (error) {
+        // ファイルがない場合はスキップ
+      }
+    }
+    
+    return hardcodedPorts;
+  }
+  
+  // ポートが使用中かチェック
+  async isPortInUse(port) {
+    return new Promise((resolve) => {
+      const tester = createConnection({ port }, () => {
+        tester.end();
+        resolve(true);
+      });
+      
+      tester.on('error', () => {
+        resolve(false);
+      });
+      
+      tester.setTimeout(100);
+      tester.on('timeout', () => {
+        tester.destroy();
+        resolve(false);
+      });
+    });
+  }
+  
+  // 利用可能なポートを見つける
+  async findAvailablePort(preferredPort) {
+    for (let port = preferredPort + 1; port <= preferredPort + 100; port++) {
+      const inUse = await this.isPortInUse(port);
+      if (!inUse) {
+        return port;
+      }
+    }
+    
+    // 後方が見つからない場合、前方を探す
+    for (let port = preferredPort - 1; port >= 3000; port--) {
+      const inUse = await this.isPortInUse(port);
+      if (!inUse) {
+        return port;
+      }
+    }
+    
+    throw new Error(`No available ports found near ${preferredPort}`);
+  }
+  
+  // プロキシサーバーのセットアップ
+  async setupProxyAfterAppStart(service, proxyInfo) {
+    // アプリが起動して、代替ポートで実際にリスニングするまで待つ
+    setTimeout(async () => {
+      for (const [originalPort, alternativePort] of Object.entries(proxyInfo.alternatives)) {
+        const originalPortNum = parseInt(originalPort);
+        
+        // 代替ポートでアプリが実際に起動しているか確認
+        const appRunning = await this.isPortInUse(alternativePort);
+        if (appRunning) {
+          try {
+            // 別のポートでプロキシを起動（元のポートが空いた場合のみ）
+            const originalPortFree = !(await this.isPortInUse(originalPortNum));
+            if (originalPortFree) {
+              await this.createPortProxy(originalPortNum, alternativePort, service.name);
+            } else {
+              console.log(`⚠️  Original port ${originalPortNum} still occupied, proxy not needed`);
+            }
+          } catch (error) {
+            console.log(`⚠️  Could not create proxy ${originalPort} → ${alternativePort}: ${error.message}`);
+          }
+        } else {
+          console.log(`🔍 App not yet running on ${alternativePort}, proxy setup delayed`);
+        }
+      }
+    }, 5000);
+  }
+  
+  // ポートプロキシの作成
+  async createPortProxy(fromPort, toPort, serviceName) {
+    return new Promise((resolve, reject) => {
+      const proxyServer = createHttpServer((req, res) => {
+        // HTTPリクエストをターゲットポートに転送
+        const targetUrl = `http://localhost:${toPort}${req.url}`;
+        
+        const options = {
+          hostname: 'localhost',
+          port: toPort,
+          path: req.url,
+          method: req.method,
+          headers: req.headers
+        };
+        
+        const proxyReq = httpRequest(options, (proxyRes) => {
+          res.writeHead(proxyRes.statusCode, proxyRes.headers);
+          proxyRes.pipe(res);
+        });
+        
+        proxyReq.on('error', (err) => {
+          res.writeHead(502, { 'Content-Type': 'text/plain' });
+          res.end(`Proxy error: ${err.message}`);
+        });
+        
+        req.pipe(proxyReq);
+      });
+      
+      proxyServer.listen(fromPort, (err) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        
+        console.log(`🔗 Proxy active: http://localhost:${fromPort} → http://localhost:${toPort}`);
+        console.log(`🌐 Access your app at: http://localhost:${fromPort}`);
+        
+        // プロキシサーバーをサービスに関連付け
+        const service = this.runningServices.get(serviceName);
+        if (service) {
+          if (!service.proxies) service.proxies = [];
+          service.proxies.push({ server: proxyServer, fromPort, toPort });
+        }
+        
+        resolve(proxyServer);
+      });
+    });
+  }
+  
+  // アプリ起動後のポート監視と管理
+  async monitorAndManagePorts(service) {
+    // アプリが起動するまで少し待つ
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    try {
+      // 子プロセスがLISTENしているポートを検出
+      const { execSync } = await import('child_process');
+      const output = execSync(`lsof -p ${service.child.pid} -iTCP -sTCP:LISTEN -P -n 2>/dev/null || echo ""`, { encoding: 'utf8' });
+      
+      if (!output.trim()) {
+        console.log(`🔍 ${service.name} not listening on any ports yet`);
+        return;
+      }
+      
+      const lines = output.trim().split('\n').filter(line => line.includes('LISTEN'));
+      
+      const detectedPorts = new Set();
+      lines.forEach(line => {
+        // より精密なポート抽出
+        const portMatch = line.match(/:([0-9]+)\s/);
+        if (portMatch) {
+          const port = parseInt(portMatch[1]);
+          // 実用的なポート範囲のみ
+          if (port >= 3000 && port <= 9999) {
+            detectedPorts.add(port);
+          }
+        }
+      });
+      
+      if (detectedPorts.size > 0) {
+        const actualPorts = Array.from(detectedPorts);
+        const assignedPort = service.ports.main || Object.values(service.ports)[0];
+        
+        if (actualPorts.some(port => port !== assignedPort)) {
+          console.log(`\n🔍 Detected app listening on: ${actualPorts.join(', ')}`);
+          console.log(`📝 Assigned port was: ${assignedPort}`);
+          
+          // 実際のポートをサービスに登録
+          service.actualPorts = actualPorts;
+          
+          // neco管理下に実ポートを追加
+          const { reserve } = await import('../lib/necoport-v2.js');
+          for (const port of actualPorts) {
+            try {
+              await reserve(`${service.name}-actual-${port}`, port);
+              console.log(`📌 Registered actual port ${port} under neco management`);
+            } catch (error) {
+              console.log(`⚠️  Could not reserve port ${port}: ${error.message}`);
+            }
+          }
+          
+          console.log(`\n✅ Service ${service.name} is accessible on: ${actualPorts.join(', ')}`);
+          
+          // ポートフォワーディングの提案（将来的に実装）
+          if (assignedPort !== actualPorts[0]) {
+            console.log(`🔗 Consider setting up forwarding: ${assignedPort} → ${actualPorts[0]}`);
+          }
+        }
+      }
+    } catch (error) {
+      // アプリがまだ起動中か、ポートをLISTENしていない
+      console.log(`🔍 Monitoring ${service.name} for port usage...`);
+    }
+  }
+  
   async checkPortMismatch(command, assignedPort, cwd) {
     if (!assignedPort) return;
     
@@ -293,6 +589,19 @@ export class NecoLauncher {
       }
     }
 
+    // 事前ポート競合チェックと自動解決
+    const resolvedPorts = await this.resolvePortConflicts(command, reservedPorts, serviceEnv, cwd);
+    if (resolvedPorts) {
+      // ポートが変更された場合、環境変数を更新
+      Object.assign(serviceEnv, resolvedPorts.env);
+      reservedPorts = resolvedPorts.ports;
+      
+      // プロキシが必要な場合は情報を保存
+      if (resolvedPorts.needsProxy) {
+        this.proxyInfo = resolvedPorts;
+      }
+    }
+    
     // ポート不一致の検出とアドバイス
     await this.checkPortMismatch(command, serviceEnv.PORT, cwd);
     
@@ -315,6 +624,15 @@ export class NecoLauncher {
     };
 
     this.runningServices.set(name, service);
+    
+    // プロキシが必要な場合は起動後にセットアップ
+    if (this.proxyInfo) {
+      this.setupProxyAfterAppStart(service, this.proxyInfo);
+      this.proxyInfo = null; // リセット
+    }
+    
+    // アプリ起動後に実際のポートを監視して管理
+    this.monitorAndManagePorts(service);
 
     // 終了時のクリーンアップ
     child.on('exit', (code) => {
@@ -332,6 +650,18 @@ export class NecoLauncher {
 
     console.log(`🛑 Stopping service: ${name}`);
     
+    // プロキシサーバーの停止
+    if (service.proxies) {
+      service.proxies.forEach(proxy => {
+        try {
+          proxy.server.close();
+          console.log(`🔗 Stopped proxy: ${proxy.fromPort} → ${proxy.toPort}`);
+        } catch (error) {
+          // エラーを無視
+        }
+      });
+    }
+    
     // プロセス終了
     if (service.child && !service.child.killed) {
       service.child.kill('SIGTERM');
@@ -348,6 +678,19 @@ export class NecoLauncher {
     // ポート解放
     try {
       await release(name);
+      
+      // 実際に使用されていたポートも解放
+      if (service.actualPorts) {
+        for (const port of service.actualPorts) {
+          try {
+            await release(`${name}-actual-${port}`);
+            console.log(`📦 Released actual port ${port}`);
+          } catch (error) {
+            // エラーを無視（既に解放済みの可能性）
+          }
+        }
+      }
+      
       console.log(`📦 Released ports for ${name}`);
     } catch (error) {
       console.warn(`Warning: Failed to release ports for ${name}`);

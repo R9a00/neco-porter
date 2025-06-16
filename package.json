@@ -1,7 +1,7 @@
 {
   "name": "neco-porter",
-  "version": "2.2.0",
-  "description": "Port management service where cats deliver your ports! 🐱",
+  "version": "2.3.0",
+  "description": "Zero-conflict port management - just add 'neco' to any command! 🐱",
   "type": "module",
   "main": "lib/necoport.js",
   "types": "lib/necoport.d.ts",
