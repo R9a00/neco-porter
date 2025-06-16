@@ -1,0 +1,36 @@
+# expmt-platform-saas 用 Neco Porter 設定
+version: 1
+
+services:
+  # プラットフォーム基盤
+  platform:
+    command: "python3 platform_manager.py"
+    cwd: "../expmt-platform-saas"
+    ports:
+      main: 8000      # Platform Manager
+      auth: 8001      # Auth Service  
+      rbac: 8002      # RBAC Service
+      testapp: 8003   # Test App
+    env:
+      PLATFORM_PORT: "8000"
+      AUTH_SERVICE_PORT: "8001"
+      RBAC_SERVICE_PORT: "8002"
+      TEST_APP_PORT: "8003"
+      PYTHONPATH: "../expmt-platform-saas"
+      
+  # 個別サービステスト用
+  auth-only:
+    command: "python3 -m services.auth-service.main"
+    cwd: "../expmt-platform-saas"
+    ports:
+      main: 8001
+    env:
+      PORT: "8001"
+      
+  rbac-only:
+    command: "python3 -m services.rbac-service.main"  
+    cwd: "../expmt-platform-saas"
+    ports:
+      main: 8002
+    env:
+      PORT: "8002"

@@ -1,0 +1,104 @@
+#!/usr/bin/env node
+// Universal Neco Porter CLI - Node.js版
+
+import { spawn } from 'child_process';
+import { reserve, release, list } from './lib/necoport-v2.js';
+
+const args = process.argv.slice(2);
+const command = args[0];
+
+async function exec() {
+  const nameIndex = args.indexOf('exec') + 1;
+  if (nameIndex === 0 || nameIndex >= args.length) {
+    console.error('Usage: necoport exec <name> <command...>');
+    process.exit(1);
+  }
+  
+  const name = args[nameIndex];
+  const commandArgs = args.slice(nameIndex + 1);
+  
+  // ポート予約
+  try {
+    const port = await reserve(name);
+    console.log(`(=^･ω･^=) Port ${port} reserved for ${name}`);
+    
+    // 環境変数設定
+    const env = { ...process.env, PORT: port };
+    
+    // コマンド実行
+    const child = spawn(commandArgs[0], commandArgs.slice(1), {
+      env,
+      stdio: 'inherit',
+      shell: true
+    });
+    
+    // クリーンアップ
+    const cleanup = async () => {
+      await release(name);
+      console.log(`\n(=^･ω･^=)ﾉ Port released!`);
+      process.exit(0);
+    };
+    
+    process.on('SIGINT', cleanup);
+    process.on('SIGTERM', cleanup);
+    
+    child.on('exit', (code) => {
+      cleanup().then(() => process.exit(code));
+    });
+    
+  } catch (error) {
+    console.error('Error:', error.message);
+    process.exit(1);
+  }
+}
+
+async function showList() {
+  const ports = await list();
+  if (ports.length === 0) {
+    console.log('No active reservations');
+    return;
+  }
+  
+  console.log('Active ports:');
+  ports.forEach(p => {
+    console.log(`  ${p.cat} ${p.name}: ${p.port}`);
+  });
+}
+
+// メインコマンド処理
+switch (command) {
+  case 'exec':
+    exec();
+    break;
+  case 'list':
+    showList();
+    break;
+  case 'reserve':
+    if (args.length < 2) {
+      console.error('Usage: necoport reserve <name>');
+      process.exit(1);
+    }
+    reserve(args[1]).then(port => {
+      console.log(`(=^･ω･^=) Port ${port} reserved`);
+    });
+    break;
+  case 'release':
+    if (args.length < 2) {
+      console.error('Usage: necoport release <name>');
+      process.exit(1);
+    }
+    release(args[1]).then(() => {
+      console.log(`(=^･ω･^=)ﾉ Released!`);
+    });
+    break;
+  default:
+    console.log('🐱 Neco Porter - Simple Port Management');
+    console.log('\nUsage:');
+    console.log('  necoport exec <name> <command...>  # Run with managed port');
+    console.log('  necoport list                       # List active ports');
+    console.log('  necoport reserve <name>             # Reserve a port');
+    console.log('  necoport release <name>             # Release a port');
+    console.log('\nExample:');
+    console.log('  necoport exec web npm run dev');
+    console.log('  necoport exec api python app.py');
+}

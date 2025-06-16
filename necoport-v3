@@ -1,0 +1,207 @@
+#!/usr/bin/env node
+// Neco Porter v3 - Launcher支援版
+
+import { launcher } from './src/launcher.js';
+import { reserve, release, list } from './lib/necoport-v2.js';
+
+const args = process.argv.slice(2);
+const command = args[0];
+
+async function execCommand() {
+  if (args.length < 3) {
+    console.error('Usage: necoport-v3 exec <name> <command...>');
+    process.exit(1);
+  }
+
+  const name = args[1];
+  const commandStr = args.slice(2).join(' ');
+
+  await launcher.startService(name, {
+    command: commandStr,
+    cwd: process.cwd()
+  });
+}
+
+async function runCommand() {
+  if (args.length < 2) {
+    // 引数なしの場合は全サービス起動
+    try {
+      await launcher.runAll();
+      console.log('✅ All services started');
+    } catch (error) {
+      console.error('❌ Error:', error.message);
+      process.exit(1);
+    }
+    return;
+  }
+
+  const serviceName = args[1];
+  
+  try {
+    await launcher.runFromConfig(serviceName);
+    console.log(`✅ Service ${serviceName} started`);
+  } catch (error) {
+    console.error('❌ Error:', error.message);
+    process.exit(1);
+  }
+}
+
+async function stopCommand() {
+  if (args.length < 2) {
+    await launcher.stopAll();
+    console.log('✅ All services stopped');
+    return;
+  }
+
+  const serviceName = args[1];
+  await launcher.stopService(serviceName);
+  console.log(`✅ Service ${serviceName} stopped`);
+}
+
+async function statusCommand() {
+  const services = launcher.listServices();
+  
+  if (services.length === 0) {
+    console.log('No running services');
+    return;
+  }
+
+  console.log('🐱 Running services:\n');
+  services.forEach(service => {
+    console.log(`  ${service.name}`);
+    console.log(`    PID: ${service.pid}`);
+    console.log(`    Uptime: ${service.uptime}s`);
+    console.log(`    Ports: ${Object.entries(service.ports).map(([k,v]) => `${k}:${v}`).join(', ')}`);
+    console.log();
+  });
+}
+
+async function initCommand() {
+  const configPath = '.necoport.yaml';
+  
+  // 既存の設定ファイルをチェック
+  try {
+    await launcher.loadConfig(configPath);
+    console.log('⚠️  Configuration file already exists:', configPath);
+    return;
+  } catch (error) {
+    // ファイルが存在しない場合は作成
+  }
+
+  // 自動検出
+  const runtime = await launcher.detectRuntime(process.cwd());
+  
+  let exampleConfig;
+  if (runtime.runtime === 'python') {
+    exampleConfig = `# Neco Porter Configuration
+version: 1
+
+services:
+  app:
+    command: "${runtime.command} app.py"
+    ports:
+      main: 8000
+    env:
+      PYTHONPATH: "."
+      
+  # 他のサービスを追加
+  # api:
+  #   command: "${runtime.command} api.py"
+  #   ports:
+  #     http: 8001
+  #     grpc: 8002
+`;
+  } else if (runtime.runtime === 'node') {
+    exampleConfig = `# Neco Porter Configuration
+version: 1
+
+services:
+  web:
+    command: "npm run dev"
+    ports:
+      main: 3000
+      hmr: 3001
+    env:
+      NODE_ENV: "development"
+      
+  api:
+    command: "npm run api"
+    ports:
+      http: 8000
+`;
+  } else {
+    exampleConfig = `# Neco Porter Configuration
+version: 1
+
+services:
+  app:
+    command: "your-command-here"
+    ports:
+      main: 8000
+    env:
+      PORT: "auto"  # Will be set automatically
+`;
+  }
+
+  const fs = await import('fs/promises');
+  await fs.writeFile(configPath, exampleConfig);
+  
+  console.log('✅ Created configuration file:', configPath);
+  if (runtime.detected) {
+    console.log(`🔍 Detected ${runtime.runtime} project (${runtime.detected})`);
+  }
+  console.log('\nEdit the configuration file and run:');
+  console.log('  necoport-v3 run <service-name>');
+  console.log('  necoport-v3 run                # Run all services');
+}
+
+// メインコマンド処理
+switch (command) {
+  case 'exec':
+    execCommand();
+    break;
+    
+  case 'run':
+    runCommand();
+    break;
+    
+  case 'stop':
+    stopCommand();
+    break;
+    
+  case 'status':
+  case 'ps':
+    statusCommand();
+    break;
+    
+  case 'init':
+    initCommand();
+    break;
+    
+  case 'list':
+    const ports = await list();
+    if (ports.length === 0) {
+      console.log('No active port reservations');
+    } else {
+      console.log('🐱 Active ports:\n');
+      ports.forEach(p => {
+        console.log(`  ${p.cat} ${p.name}: ${p.port}`);
+      });
+    }
+    break;
+    
+  default:
+    console.log('🐱 Neco Porter v3 - Enhanced Port Management & Launcher');
+    console.log('\nCommands:');
+    console.log('  init                           # Create configuration file');
+    console.log('  run [service]                  # Run service(s) from config');
+    console.log('  exec <name> <command...>       # Run command with managed port');
+    console.log('  stop [service]                 # Stop service(s)');
+    console.log('  status                         # Show running services');
+    console.log('  list                           # List active ports');
+    console.log('\nExamples:');
+    console.log('  necoport-v3 init               # Setup project');
+    console.log('  necoport-v3 run web            # Start web service');
+    console.log('  necoport-v3 run                # Start all services');
+    console.log('  necoport-v3 exec api python app.py  # Direct execution');
+}

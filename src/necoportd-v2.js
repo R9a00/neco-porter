@@ -112,16 +112,35 @@ async function findAvailablePorts(count, hints = {}) {
       }
     }
     
-    const availablePorts = await getPort({ port: portArray });
-    
-    if (remaining.length > 0) {
-      foundPorts[remaining[0]] = availablePorts;
-    } else {
-      for (let i = 0; i < count; i++) {
-        const p = await getPort({ port: portArray });
-        foundPorts[i] = p;
-        portArray.splice(portArray.indexOf(p), 1);
+    // Get one port at a time from the array
+    for (let i = 0; i < needed; i++) {
+      if (portArray.length === 0) {
+        throw new Error('No available ports in configured range');
       }
+      
+      // Try each port in the array until we find a free one
+      let availablePort = null;
+      for (const tryPort of portArray) {
+        if (await isFree(tryPort)) {
+          availablePort = tryPort;
+          break;
+        }
+      }
+      
+      if (!availablePort) {
+        throw new Error('No available ports in configured range');
+      }
+      
+      if (remaining.length > 0) {
+        foundPorts[remaining[i]] = availablePort;
+      } else {
+        foundPorts[i] = availablePort;
+      }
+      
+      // Remove used port from array
+      const idx = portArray.indexOf(availablePort);
+      if (idx > -1) portArray.splice(idx, 1);
+      usedPorts.add(availablePort);
     }
   }
   
@@ -170,8 +189,12 @@ app.post('/reserve', async (req, res) => {
     
     // v1 mode - single port
     if (!ports && !count) {
-      foundPorts = await findAvailablePorts(0, { main: hint });
-      const port = foundPorts.main || await getPort({ port: range });
+      foundPorts = await findAvailablePorts(1, { main: hint });
+      const port = foundPorts.main || Object.values(foundPorts)[0];
+      
+      if (!port) {
+        throw new Error('No available ports in configured range');
+      }
       
       db[name] = createReservation({
         ports: port,
@@ -216,7 +239,7 @@ app.post('/reserve', async (req, res) => {
   } catch (error) {
     console.error('(=TωT=) Error reserving ports:', error);
     return res.status(503).json({ 
-      error: 'Failed to reserve ports',
+      error: error.message || 'Failed to reserve ports',
       cat: '(=；ω；=) Sorry, something went wrong...'
     });
   }
@@ -246,8 +269,9 @@ app.post('/release', (req, res) => {
       console.log(`${getCatForPort(port)}ﾉ Port ${port} (${portName}) released by ${name}`);
     } else {
       const ports = getPortsFromReservation(db[name]);
+      const mainPort = db[name].port || Object.values(ports)[0];
       delete db[name];
-      console.log(`${getCatForPort(db[name].port)}ﾉ All ports released by ${name}:`, ports);
+      console.log(`${getCatForPort(mainPort)}ﾉ All ports released by ${name}:`, ports);
     }
     
     save();

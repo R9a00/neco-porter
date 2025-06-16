@@ -1,0 +1,470 @@
+#!/usr/bin/env node
+// Neco Porter - シンプル統一インターフェース
+
+import { spawn } from 'child_process';
+import { reserve, release, list } from './lib/necoport-v2.js';
+import { launcher } from './src/launcher.js';
+import fs from 'fs/promises';
+import path from 'path';
+
+const args = process.argv.slice(2);
+
+// コマンドなしの場合はインタラクティブモード
+if (args.length === 0) {
+  showInteractiveMenu();
+  process.exit(0);
+}
+
+// スマートコマンド解析
+async function smartRun() {
+  const input = args.join(' ');
+  
+  // 特殊オプションの解析
+  let ports = {};
+  let env = {};
+  let commandArgs = [...args];
+  
+  // --ports オプションの解析
+  const portsIndex = args.indexOf('--ports');
+  if (portsIndex !== -1 && portsIndex < args.length - 1) {
+    const portsSpec = args[portsIndex + 1];
+    const portsList = portsSpec.split(',');
+    
+    portsList.forEach((spec, index) => {
+      if (spec.includes(':')) {
+        const [name, hint] = spec.split(':');
+        ports[name] = { hint: parseInt(hint) };
+      } else {
+        ports[index === 0 ? 'main' : `port${index}`] = { hint: parseInt(spec) || 0 };
+      }
+    });
+    
+    // コマンドからオプションを削除
+    commandArgs.splice(portsIndex, 2);
+  }
+  
+  // --env オプションの解析
+  const envIndex = args.indexOf('--env');
+  if (envIndex !== -1 && envIndex < args.length - 1) {
+    const envSpec = args[envIndex + 1];
+    envSpec.split(',').forEach(pair => {
+      const [key, value] = pair.split('=');
+      if (key && value) env[key] = value;
+    });
+    commandArgs.splice(envIndex, 2);
+  }
+  
+  // パターン1: "neco myapp" - 設定ファイルから起動
+  if (commandArgs.length === 1 && !commandArgs[0].includes('.')) {
+    const hasConfig = await checkConfig();
+    if (hasConfig) {
+      console.log(`🐱 Starting ${commandArgs[0]} from config...`);
+      await launcher.runFromConfig(commandArgs[0]);
+      return;
+    }
+  }
+  
+  // パターン2: "neco python app.py" - 直接実行
+  if (isExecutableCommand(commandArgs[0])) {
+    const name = generateServiceName();
+    console.log(`🐱 Running command with port management...`);
+    
+    const options = {
+      command: commandArgs.join(' '),
+      cwd: process.cwd()
+    };
+    
+    // オプションがあれば追加
+    if (Object.keys(ports).length > 0) options.ports = ports;
+    if (Object.keys(env).length > 0) options.env = env;
+    
+    await launcher.startService(name, options);
+    return;
+  }
+  
+  // パターン3: "neco ." または "neco start" - 自動検出して起動
+  if (input === '.' || input === 'start') {
+    await autoStart();
+    return;
+  }
+  
+  // パターン4: "neco stop" - 全停止
+  if (args[0] === 'stop') {
+    await launcher.stopAll();
+    console.log('✅ All services stopped');
+    return;
+  }
+  
+  // パターン5: "neco status" または "neco ls" - 状態表示
+  if (args[0] === 'status' || args[0] === 'ls') {
+    await showStatus();
+    return;
+  }
+  
+  // パターン6: ヘルプ
+  if (input === 'help' || input === '--help' || input === '-h') {
+    showHelp();
+    return;
+  }
+  
+  // 不明なコマンド
+  console.log(`❓ Unknown command: ${input}`);
+  console.log('Try: neco help');
+}
+
+// 設定ファイルの存在確認
+async function checkConfig() {
+  try {
+    await fs.access('.necoport.yaml');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// 実行可能なコマンドかチェック
+function isExecutableCommand(cmd) {
+  const executables = [
+    'node', 'npm', 'yarn', 'npx', 'pnpm',
+    'python', 'python3', 'pip', 'pipenv', 'poetry',
+    'ruby', 'bundle', 'rails',
+    'go', 'cargo', 'java', 'gradle', 'mvn',
+    'php', 'composer', 'dotnet',
+    'sh', 'bash', 'zsh'
+  ];
+  
+  return executables.includes(cmd) || 
+         cmd.endsWith('.js') || 
+         cmd.endsWith('.py') || 
+         cmd.endsWith('.rb') ||
+         cmd.endsWith('.sh') ||
+         cmd.startsWith('./') ||
+         cmd.startsWith('../');
+}
+
+// サービス名の自動生成
+function generateServiceName() {
+  const cwd = process.cwd();
+  const projectName = path.basename(cwd);
+  const timestamp = Date.now().toString(36).slice(-4);
+  return `${projectName}-${timestamp}`;
+}
+
+// Procfile パーサー
+async function parseProcfile(filename) {
+  try {
+    const content = await fs.readFile(filename, 'utf8');
+    const lines = content.split('\n').filter(line => line.trim() && !line.startsWith('#'));
+    const suggestions = [];
+    
+    for (const line of lines) {
+      const [name, cmd] = line.split(':').map(s => s.trim());
+      if (name && cmd) {
+        suggestions.push({
+          cmd,
+          name: `procfile-${name}`,
+          description: `Procfile: ${name}`,
+          priority: 100
+        });
+      }
+    }
+    return suggestions;
+  } catch {
+    return [];
+  }
+}
+
+// Makefile パーサー
+async function parseMakefile(filename) {
+  try {
+    const content = await fs.readFile(filename, 'utf8');
+    const suggestions = [];
+    
+    // よくあるターゲット名
+    const serverTargets = ['run', 'server', 'serve', 'start', 'dev', 'develop'];
+    const lines = content.split('\n');
+    
+    for (const target of serverTargets) {
+      if (lines.some(line => line.startsWith(`${target}:`))) {
+        suggestions.push({
+          cmd: `make ${target}`,
+          name: `make-${target}`,
+          description: `Makefile: ${target} target`,
+          priority: 90
+        });
+      }
+    }
+    return suggestions;
+  } catch {
+    return [];
+  }
+}
+
+// package.json 解析
+async function analyzePackageJson(suggestions) {
+  try {
+    const packageJson = JSON.parse(await fs.readFile('package.json', 'utf8'));
+    const scripts = packageJson.scripts || {};
+    
+    // main/start フィールドもチェック
+    if (packageJson.main && !scripts.start) {
+      suggestions.push({
+        cmd: `node ${packageJson.main}`,
+        name: 'node-main',
+        description: `package.json main: ${packageJson.main}`,
+        priority: 65
+      });
+    }
+    
+    // scripts の解析
+    const priorityScripts = [
+      { name: 'dev', desc: 'Development server', priority: 85 },
+      { name: 'start', desc: 'Start script', priority: 84 },
+      { name: 'serve', desc: 'Serve', priority: 83 },
+      { name: 'server', desc: 'Server', priority: 82 },
+      { name: 'develop', desc: 'Development', priority: 81 }
+    ];
+    
+    for (const { name, desc, priority } of priorityScripts) {
+      if (scripts[name]) {
+        suggestions.push({
+          cmd: `npm run ${name}`,
+          name: `npm-${name}`,
+          description: `${desc} (${scripts[name].substring(0, 30)}...)`,
+          priority
+        });
+      }
+    }
+  } catch {}
+}
+
+// プロジェクト分析
+async function analyzeProject() {
+  const suggestions = [];
+  const files = await fs.readdir('.');
+  
+  // よくあるエントリーポイントを優先順位付きで検索
+  const commonEntryPoints = [
+    // 設定・起動ファイル
+    { file: 'Procfile', parser: parseProcfile, priority: 100 },
+    { file: 'docker-compose.yml', cmd: 'docker-compose up', priority: 95 },
+    { file: 'docker-compose.yaml', cmd: 'docker-compose up', priority: 95 },
+    { file: 'Makefile', parser: parseMakefile, priority: 90 },
+    
+    // Python
+    { file: 'platform_manager.py', cmd: 'python3 platform_manager.py', priority: 85 },
+    { file: 'manage.py', cmd: 'python manage.py runserver', priority: 80 },
+    { file: 'app.py', cmd: 'python3 app.py', priority: 75 },
+    { file: 'main.py', cmd: 'python3 main.py', priority: 74 },
+    { file: 'server.py', cmd: 'python3 server.py', priority: 73 },
+    { file: 'run.py', cmd: 'python3 run.py', priority: 72 },
+    { file: '__main__.py', cmd: 'python3 .', priority: 71 },
+    
+    // Node.js
+    { file: 'server.js', cmd: 'node server.js', priority: 70 },
+    { file: 'index.js', cmd: 'node index.js', priority: 69 },
+    { file: 'app.js', cmd: 'node app.js', priority: 68 },
+    
+    // Ruby
+    { file: 'config.ru', cmd: 'bundle exec rackup', priority: 70 },
+    { file: 'Rakefile', cmd: 'bundle exec rake server', priority: 65 },
+    
+    // Go
+    { file: 'main.go', cmd: 'go run main.go', priority: 70 },
+    
+    // Java
+    { file: 'pom.xml', cmd: 'mvn spring-boot:run', priority: 60 },
+    { file: 'build.gradle', cmd: 'gradle bootRun', priority: 60 },
+  ];
+  
+  // エントリーポイントの検出
+  for (const entry of commonEntryPoints) {
+    if (files.includes(entry.file)) {
+      if (entry.parser) {
+        // パーサーがある場合は内容を解析
+        const parsed = await entry.parser(entry.file);
+        if (parsed) suggestions.push(...parsed);
+      } else if (entry.cmd) {
+        suggestions.push({
+          cmd: entry.cmd,
+          name: path.basename(process.cwd()),
+          description: `Auto-detected: ${entry.file}`,
+          priority: entry.priority
+        });
+      }
+    }
+  }
+  
+  // package.json の解析（特別扱い）
+  if (files.includes('package.json')) {
+    await analyzePackageJson(suggestions);
+  }
+  
+  // Python プロジェクト - 既にエントリーポイントで検出済みなのでここでは追加処理なし
+  
+  // その他のプロジェクトタイプは既にcommonEntryPointsで処理済み
+  
+  // ソート（優先度順）
+  return suggestions.sort((a, b) => b.priority - a.priority);
+}
+
+// 自動起動
+async function autoStart() {
+  console.log('🔍 Analyzing project...\n');
+  
+  // 設定ファイルがある場合
+  const hasConfig = await checkConfig();
+  if (hasConfig) {
+    console.log('📋 Found .necoport.yaml');
+    const config = await launcher.loadConfig();
+    const services = Object.keys(config.services || {});
+    
+    if (services.length === 1) {
+      console.log(`🚀 Starting ${services[0]}...`);
+      await launcher.runFromConfig(services[0]);
+    } else if (services.length > 1) {
+      console.log('Multiple services found. Choose one:\n');
+      services.forEach((s, i) => {
+        console.log(`  ${i + 1}. neco ${s}`);
+      });
+      console.log(`  ${services.length + 1}. neco start    (run all)`);
+      console.log('\nOr edit .necoport.yaml to customize.');
+    }
+    return;
+  }
+  
+  // プロジェクト分析
+  const suggestions = await analyzeProject();
+  
+  if (suggestions.length === 0) {
+    console.log('❌ Could not determine how to start this project.\n');
+    console.log('Try one of these:');
+    console.log('  1. Create .necoport.yaml configuration file');
+    console.log('  2. Run a specific command: neco <your-command>');
+    console.log('\nExample commands:');
+    console.log('  neco python app.py');
+    console.log('  neco npm run dev');
+    console.log('  neco node server.js');
+    return;
+  }
+  
+  // 提案を表示
+  console.log('📋 Found these options:\n');
+  suggestions.forEach((s, i) => {
+    console.log(`  ${i + 1}. ${s.cmd}`);
+    console.log(`     ${s.description}`);
+    console.log();
+  });
+  
+  if (suggestions.length === 1) {
+    console.log(`🚀 Running: ${suggestions[0].cmd}\n`);
+    await launcher.startService(suggestions[0].name, {
+      command: suggestions[0].cmd,
+      cwd: process.cwd()
+    });
+  } else {
+    console.log('💡 Run with:');
+    console.log(`   neco ${suggestions[0].cmd}`);
+    console.log('\nOr create .necoport.yaml for custom configuration.');
+  }
+}
+
+// ステータス表示
+async function showStatus() {
+  // 実行中のサービス
+  const services = launcher.listServices();
+  if (services.length > 0) {
+    console.log('🐱 Running services:\n');
+    services.forEach(service => {
+      console.log(`  ${service.name}`);
+      console.log(`    PID: ${service.pid}`);
+      console.log(`    Ports: ${Object.entries(service.ports).map(([k,v]) => `${k}:${v}`).join(', ')}`);
+      console.log(`    Uptime: ${formatUptime(service.uptime)}`);
+      console.log();
+    });
+  }
+  
+  // 予約済みポート
+  const ports = await list();
+  if (ports.length > 0) {
+    console.log('📦 Reserved ports:\n');
+    ports.forEach(p => {
+      console.log(`  ${p.cat} ${p.name}: ${p.port}`);
+    });
+  }
+  
+  if (services.length === 0 && ports.length === 0) {
+    console.log('No active services or ports');
+  }
+}
+
+// アップタイムのフォーマット
+function formatUptime(seconds) {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  const hours = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  return `${hours}h ${mins}m`;
+}
+
+// インタラクティブメニュー
+function showInteractiveMenu() {
+  console.log(`
+🐱 Neco Porter - Smart Port Manager
+
+Quick Start:
+  neco .                    # Auto-detect and start
+  neco python app.py        # Run Python app
+  neco npm run dev          # Run npm script
+  
+With Config (.necoport.yaml):
+  neco myapp                # Start service 'myapp'
+  neco start                # Start all services
+  
+Management:
+  neco status               # Show running services
+  neco stop                 # Stop all services
+
+Examples:
+  neco python manage.py runserver
+  neco node server.js
+  neco rails server
+  neco ./my-script.sh
+  `);
+}
+
+// ヘルプ表示
+function showHelp() {
+  console.log(`
+🐱 Neco Porter - The simplest way to manage ports
+
+USAGE:
+  neco [command/service]    # Smart detection
+
+PATTERNS:
+  neco .                    # Auto-detect and run
+  neco <service>            # Run from .necoport.yaml
+  neco <command...>         # Run any command
+  neco status               # Show status
+  neco stop                 # Stop everything
+
+SMART DETECTION:
+  - Finds package.json → runs npm scripts
+  - Finds requirements.txt → runs Python files
+  - Finds .necoport.yaml → uses configuration
+
+NO MORE PORT CONFLICTS! 🎉
+  `);
+}
+
+// エラーハンドラー
+process.on('unhandledRejection', (err) => {
+  console.error('❌ Error:', err.message);
+  process.exit(1);
+});
+
+// メイン実行
+smartRun().catch(err => {
+  console.error('❌ Error:', err.message);
+  process.exit(1);
+});

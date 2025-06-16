@@ -1,0 +1,33 @@
+#!/bin/bash
+# expmt-platform-saas 専用ランチャー
+
+# 設定ファイルを準備
+cat > .necoport.yaml << 'EOF'
+version: 1
+services:
+  platform:
+    command: "python3 platform_manager.py"
+    cwd: "../expmt-platform-saas"
+    ports:
+      main: 8000
+      auth: 8001
+      rbac: 8002
+      testapp: 8003
+    env:
+      PLATFORM_PORT: "8000"
+      AUTH_SERVICE_PORT: "8001"
+      RBAC_SERVICE_PORT: "8002"
+      TEST_APP_PORT: "8003"
+EOF
+
+echo "🐱 Starting expmt-platform-saas..."
+echo
+echo "URLs:"
+echo "  Platform: http://localhost:8000"
+echo "  Auth API: http://localhost:8001/docs"
+echo "  RBAC API: http://localhost:8002/docs"
+echo "  Test App: http://localhost:8003"
+echo
+
+# シンプルに起動
+./neco platform

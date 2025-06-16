@@ -1,0 +1,55 @@
+# マイクロサービスプロジェクト全体の設定
+version: 1
+
+# プロジェクト全体の設定
+project:
+  name: "My Microservices Platform"
+  base_port: 8000
+
+# 各サービスの設定
+services:
+  # フロントエンド
+  frontend:
+    command: "npm run dev"
+    cwd: "./frontend"  # 相対パスで指定
+    ports:
+      main:
+        hint: 3000
+      hmr:
+        hint: 3001
+        
+  # APIゲートウェイ
+  gateway:
+    command: "node src/gateway.js"
+    cwd: "./services/gateway"
+    ports:
+      main:
+        hint: 8000
+        
+  # 認証サービス
+  auth:
+    command: "python auth_service.py"
+    cwd: "./services/auth"
+    ports:
+      main:
+        hint: 8001
+    env:
+      SERVICE_NAME: "auth-service"
+      
+  # ユーザーサービス
+  users:
+    command: "python -m uvicorn main:app --reload"
+    cwd: "./services/users"
+    ports:
+      main:
+        hint: 8002
+        
+  # 通知サービス
+  notifications:
+    command: "go run main.go"
+    cwd: "./services/notifications"
+    ports:
+      main:
+        hint: 8003
+      websocket:
+        hint: 8004
