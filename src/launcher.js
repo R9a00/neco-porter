@@ -308,7 +308,10 @@ export class NecoLauncher {
       name,
       child,
       ports: reservedPorts,
-      startTime: new Date()
+      startTime: new Date(),
+      command,
+      cwd,
+      env
     };
 
     this.runningServices.set(name, service);
@@ -368,7 +371,10 @@ export class NecoLauncher {
         pid: service.child.pid,
         ports: service.ports,
         uptime: Math.floor((Date.now() - service.startTime) / 1000),
-        status: service.child.killed ? 'stopped' : 'running'
+        status: service.child.killed ? 'stopped' : 'running',
+        command: service.command,
+        cwd: service.cwd,
+        env: service.env
       });
     }
     return services;

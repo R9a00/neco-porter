@@ -2,10 +2,13 @@
 // Neco Porter - シンプル統一インターフェース
 
 import { spawn } from 'child_process';
+import { createConnection } from 'net';
 import { reserve, release, list } from './lib/necoport-v2.js';
 import { launcher } from './src/launcher.js';
 import fs from 'fs/promises';
 import path from 'path';
+import readline from 'readline/promises';
+import yaml from 'js-yaml';
 
 const args = process.argv.slice(2);
 
@@ -63,8 +66,16 @@ if (args.length === 0) {
 
 // スマートコマンド解析
 async function smartRun() {
+  const input = args.join(' ');
+  
+  // ヘルプコマンドを最初にチェック
+  if (input === 'help' || input === '--help' || input === '-h') {
+    showHelp();
+    return;
+  }
+  
   // デーモンの起動を確認（stop以外のコマンドの場合）
-  if (args[0] !== 'stop' && args[0] !== 'help' && args[0] !== '--help' && args[0] !== '-h') {
+  if (args[0] !== 'stop') {
     try {
       await ensureDaemonRunning();
     } catch (error) {
@@ -72,7 +83,6 @@ async function smartRun() {
       process.exit(1);
     }
   }
-  const input = args.join(' ');
   
   // 特殊オプションの解析
   let ports = {};
@@ -111,7 +121,11 @@ async function smartRun() {
   
   // パターン1: "neco myapp" - 設定ファイルから起動
   if (commandArgs.length === 1 && !commandArgs[0].includes('.') && 
-      commandArgs[0] !== 'status' && commandArgs[0] !== 'ls' && commandArgs[0] !== 'stop') {
+      commandArgs[0] !== 'status' && commandArgs[0] !== 'ls' && commandArgs[0] !== 'stop' &&
+      commandArgs[0] !== 'ports' && commandArgs[0] !== 'ps' && commandArgs[0] !== 'doctor' &&
+      commandArgs[0] !== 'port' && commandArgs[0] !== 'release' && commandArgs[0] !== 'free' &&
+      commandArgs[0] !== 'logs' && commandArgs[0] !== 'restart' && commandArgs[0] !== 'test' &&
+      commandArgs[0] !== 'init' && commandArgs[0] !== 'config') {
     const hasConfig = await checkConfig();
     if (hasConfig) {
       console.log(`🐱 Starting ${commandArgs[0]} from config...`);
@@ -157,11 +171,60 @@ async function smartRun() {
     return;
   }
   
-  // パターン6: ヘルプ
-  if (input === 'help' || input === '--help' || input === '-h') {
-    showHelp();
+  // パターン6: ポート管理コマンド
+  if (args[0] === 'ports') {
+    await showPorts();
     return;
   }
+  
+  if (args[0] === 'port' && args[1]) {
+    await showPortDetails(args[1]);
+    return;
+  }
+  
+  if ((args[0] === 'release' || args[0] === 'free') && args[1]) {
+    await releasePort(args[1]);
+    return;
+  }
+  
+  // パターン7: プロセス管理コマンド
+  if (args[0] === 'ps') {
+    await showProcesses();
+    return;
+  }
+  
+  if (args[0] === 'logs' && args[1]) {
+    await showLogs(args[1]);
+    return;
+  }
+  
+  if (args[0] === 'restart' && args[1]) {
+    await restartService(args[1]);
+    return;
+  }
+  
+  // パターン8: 診断コマンド
+  if (args[0] === 'doctor') {
+    await runDoctor();
+    return;
+  }
+  
+  if (args[0] === 'test' && args[1]) {
+    await testPort(args[1]);
+    return;
+  }
+  
+  // パターン9: 設定管理コマンド
+  if (args[0] === 'init') {
+    await initConfig();
+    return;
+  }
+  
+  if (args[0] === 'config') {
+    await showConfig();
+    return;
+  }
+  
   
   // 不明なコマンド
   console.log(`❓ Unknown command: ${input}`);
@@ -497,12 +560,32 @@ function showHelp() {
 USAGE:
   neco [command/service]    # Smart detection
 
-PATTERNS:
+COMMANDS:
+  # Starting services
   neco .                    # Auto-detect and run
   neco <service>            # Run from .necoport.yaml
   neco <command...>         # Run any command
+  
+  # Port management
+  neco ports                # List all ports in use
+  neco port <port>          # Show port details
+  neco release <port>       # Release port gracefully
+  neco free <port>          # Free up port (alias for release)
+  
+  # Process management
+  neco ps                   # List neco-managed processes
+  neco logs <name>          # Show service logs
+  neco restart <name>       # Restart service
+  
+  # General
   neco status               # Show status
   neco stop                 # Stop everything
+  neco doctor               # Diagnose issues
+  neco test <port>          # Test port availability
+  
+  # Configuration
+  neco init                 # Create .necoport.yaml interactively
+  neco config               # Show current configuration
 
 SMART DETECTION:
   - Finds package.json → runs npm scripts
@@ -518,6 +601,511 @@ process.on('unhandledRejection', (err) => {
   console.error('❌ Error:', err.message);
   process.exit(1);
 });
+
+// ポート管理コマンド
+async function showPorts() {
+  try {
+    // lsofコマンドでポートをスキャン
+    const { execSync } = await import('child_process');
+    const output = execSync('lsof -iTCP -sTCP:LISTEN -P -n | grep -E ":\\d+"', { encoding: 'utf8' });
+    const lines = output.trim().split('\n');
+    
+    const ports = new Map();
+    lines.forEach(line => {
+      const parts = line.split(/\s+/);
+      const name = parts[0];
+      const pid = parts[1];
+      const portMatch = line.match(/:(\d+)\s*\(LISTEN\)/);
+      if (portMatch) {
+        const port = portMatch[1];
+        if (!ports.has(port)) {
+          ports.set(port, { name, pid, port });
+        }
+      }
+    });
+    
+    if (ports.size === 0) {
+      console.log('No ports currently in use');
+      return;
+    }
+    
+    console.log('🐱 Ports in use:\n');
+    const sortedPorts = Array.from(ports.values()).sort((a, b) => parseInt(a.port) - parseInt(b.port));
+    sortedPorts.forEach(({ name, pid, port }) => {
+      console.log(`  ${port.padEnd(6)} ${name.padEnd(15)} (PID: ${pid})`);
+    });
+  } catch (error) {
+    console.log('No ports currently in use');
+  }
+}
+
+async function showPortDetails(port) {
+  try {
+    const { execSync } = await import('child_process');
+    const output = execSync(`lsof -iTCP:${port} -sTCP:LISTEN -P -n`, { encoding: 'utf8' });
+    const lines = output.trim().split('\n').filter(line => line.length > 0);
+    
+    if (lines.length <= 1) {
+      console.log(`Port ${port} is not in use`);
+      return;
+    }
+    
+    console.log(`🔍 Port ${port} details:\n`);
+    const header = lines[0];
+    const data = lines[1];
+    const parts = data.split(/\s+/);
+    
+    console.log(`  Process: ${parts[0]}`);
+    console.log(`  PID: ${parts[1]}`);
+    console.log(`  User: ${parts[2]}`);
+    console.log(`  Type: ${parts[4]}`);
+    console.log(`  Status: LISTENING`);
+  } catch (error) {
+    console.log(`Port ${port} is not in use`);
+  }
+}
+
+async function releasePort(port) {
+  try {
+    const { execSync } = await import('child_process');
+    // まずポートを使用しているプロセスを特定
+    const output = execSync(`lsof -iTCP:${port} -sTCP:LISTEN -P -n -t`, { encoding: 'utf8' });
+    const pids = output.trim().split('\n').filter(pid => pid.length > 0);
+    
+    if (pids.length === 0) {
+      console.log(`Port ${port} is not in use`);
+      return;
+    }
+    
+    const uniquePids = [...new Set(pids)];
+    console.log(`🐱 Releasing port ${port} from process${uniquePids.length > 1 ? 'es' : ''}...`);
+    
+    uniquePids.forEach(pid => {
+      try {
+        execSync(`kill -9 ${pid}`);
+        console.log(`  ✓ Released from process ${pid}`);
+      } catch (err) {
+        console.log(`  × Failed to release from process ${pid}`);
+      }
+    });
+    
+    console.log(`\n✅ Port ${port} is now free`);
+  } catch (error) {
+    console.log(`Port ${port} is not in use or cannot be freed`);
+  }
+}
+
+// プロセス管理コマンド
+async function showProcesses() {
+  const services = launcher.listServices();
+  if (services.length === 0) {
+    console.log('No neco-managed processes running');
+    return;
+  }
+  
+  console.log('🐱 Neco-managed processes:\n');
+  services.forEach(service => {
+    console.log(`  ${service.name}`);
+    console.log(`    PID: ${service.pid}`);
+    console.log(`    Command: ${service.command}`);
+    console.log(`    Ports: ${Object.entries(service.ports).map(([k,v]) => `${k}:${v}`).join(', ')}`);
+    console.log(`    Uptime: ${formatUptime(service.uptime)}`);
+    console.log(`    Status: ${service.status || 'running'}`);
+    console.log();
+  });
+}
+
+async function showLogs(serviceName) {
+  const services = launcher.listServices();
+  const service = services.find(s => s.name === serviceName || s.name.includes(serviceName));
+  
+  if (!service) {
+    console.log(`Service '${serviceName}' not found`);
+    console.log('\nAvailable services:');
+    services.forEach(s => console.log(`  - ${s.name}`));
+    return;
+  }
+  
+  console.log(`📄 Logs for ${service.name}:\n`);
+  console.log('(Recent logs from daemon.log)');
+  
+  try {
+    const logContent = await fs.readFile('daemon.log', 'utf8');
+    const lines = logContent.split('\n');
+    const serviceLines = lines.filter(line => line.includes(service.name));
+    const recentLines = serviceLines.slice(-50); // 最近50行
+    
+    if (recentLines.length === 0) {
+      console.log('No logs found for this service');
+    } else {
+      recentLines.forEach(line => console.log(line));
+    }
+  } catch (error) {
+    console.log('Could not read log file');
+  }
+}
+
+async function restartService(serviceName) {
+  const services = launcher.listServices();
+  const service = services.find(s => s.name === serviceName || s.name.includes(serviceName));
+  
+  if (!service) {
+    console.log(`Service '${serviceName}' not found`);
+    console.log('\nAvailable services:');
+    services.forEach(s => console.log(`  - ${s.name}`));
+    return;
+  }
+  
+  console.log(`🔄 Restarting ${service.name}...`);
+  
+  // サービスの設定を保存
+  const config = {
+    command: service.command,
+    cwd: service.cwd,
+    ports: service.ports,
+    env: service.env
+  };
+  
+  // 停止
+  await launcher.stopService(service.name);
+  console.log('  ✓ Stopped');
+  
+  // 少し待つ
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  
+  // 再起動
+  await launcher.startService(service.name, config);
+  console.log('  ✓ Started');
+  console.log(`\n✅ ${service.name} restarted successfully`);
+}
+
+// 診断コマンド
+async function runDoctor() {
+  console.log('🎽 Neco Doctor - Diagnosing your environment...\n');
+  
+  const checks = [];
+  
+  // 1. necoportdデーモンのチェック
+  try {
+    const daemonUrl = process.env.NECOPORTD_URL || 'http://localhost:5555';
+    const response = await fetch(`${daemonUrl}/list`);
+    if (response.ok) {
+      checks.push({ name: 'Necoportd daemon', status: '✅', message: 'Running' });
+    } else {
+      checks.push({ name: 'Necoportd daemon', status: '⚠️', message: 'Not responding properly' });
+    }
+  } catch (error) {
+    checks.push({ name: 'Necoportd daemon', status: '❌', message: 'Not running' });
+  }
+  
+  // 2. 一般的なポートのチェック
+  const commonPorts = [3000, 3001, 8080, 8000, 5000, 4000];
+  const portsInUse = [];
+  
+  for (const port of commonPorts) {
+    const inUse = await isPortInUse(port);
+    if (inUse) portsInUse.push(port);
+  }
+  
+  if (portsInUse.length === 0) {
+    checks.push({ name: 'Common ports', status: '✅', message: 'All common ports available' });
+  } else {
+    checks.push({ 
+      name: 'Common ports', 
+      status: '⚠️', 
+      message: `Ports in use: ${portsInUse.join(', ')}` 
+    });
+  }
+  
+  // 3. 設定ファイルのチェック
+  const hasConfig = await checkConfig();
+  if (hasConfig) {
+    checks.push({ name: 'Configuration', status: '✅', message: '.necoport.yaml found' });
+  } else {
+    checks.push({ name: 'Configuration', status: 'ℹ️', message: 'No .necoport.yaml found' });
+  }
+  
+  // 4. プロジェクトタイプの検出
+  const files = await fs.readdir('.');
+  const projectTypes = [];
+  if (files.includes('package.json')) projectTypes.push('Node.js');
+  if (files.includes('requirements.txt') || files.includes('setup.py')) projectTypes.push('Python');
+  if (files.includes('Gemfile')) projectTypes.push('Ruby');
+  if (files.includes('go.mod')) projectTypes.push('Go');
+  
+  if (projectTypes.length > 0) {
+    checks.push({ 
+      name: 'Project type', 
+      status: '✅', 
+      message: `Detected: ${projectTypes.join(', ')}` 
+    });
+  } else {
+    checks.push({ name: 'Project type', status: 'ℹ️', message: 'No recognized project type' });
+  }
+  
+  // 結果を表示
+  console.log('Check Results:');
+  checks.forEach(check => {
+    console.log(`  ${check.status} ${check.name}: ${check.message}`);
+  });
+  
+  console.log('\nRecommendations:');
+  if (!hasConfig) {
+    console.log('  • Run "neco init" to create a .necoport.yaml configuration');
+  }
+  if (portsInUse.length > 0) {
+    console.log('  • Use "neco ports" to see what\'s using these ports');
+  }
+  
+  const errorCount = checks.filter(c => c.status === '❌').length;
+  const warningCount = checks.filter(c => c.status === '⚠️').length;
+  
+  if (errorCount === 0 && warningCount === 0) {
+    console.log('\n✅ Everything looks good!');
+  } else if (errorCount > 0) {
+    console.log(`\n❌ Found ${errorCount} error${errorCount > 1 ? 's' : ''}`);
+  } else {
+    console.log(`\n⚠️ Found ${warningCount} warning${warningCount > 1 ? 's' : ''}`);
+  }
+}
+
+async function testPort(port) {
+  const portNum = parseInt(port);
+  if (isNaN(portNum)) {
+    console.log('Invalid port number');
+    return;
+  }
+  
+  console.log(`🧪 Testing port ${portNum}...\n`);
+  
+  const inUse = await isPortInUse(portNum);
+  
+  if (inUse) {
+    console.log(`❌ Port ${portNum} is in use`);
+    
+    // 詳細情報を取得
+    try {
+      const { execSync } = await import('child_process');
+      const output = execSync(`lsof -iTCP:${portNum} -sTCP:LISTEN -P -n`, { encoding: 'utf8' });
+      const lines = output.trim().split('\n').filter(line => line.length > 0);
+      
+      if (lines.length > 1) {
+        const data = lines[1];
+        const parts = data.split(/\s+/);
+        console.log(`\nUsed by: ${parts[0]} (PID: ${parts[1]})`);
+        console.log('\nTo free this port, run: neco release ' + portNum);
+      }
+    } catch {}
+  } else {
+    console.log(`✅ Port ${portNum} is available`);
+  }
+}
+
+// ポートが使用中かチェックするヘルパー関数
+function isPortInUse(port) {
+  return new Promise((resolve) => {
+    const tester = createConnection({ port }, () => {
+      tester.end();
+      resolve(true);
+    });
+    
+    tester.on('error', () => {
+      resolve(false);
+    });
+    
+    tester.setTimeout(100);
+    tester.on('timeout', () => {
+      tester.destroy();
+      resolve(false);
+    });
+  });
+}
+
+// 設定管理コマンド
+async function initConfig() {
+  const configPath = '.necoport.yaml';
+  
+  // 既存の設定ファイルをチェック
+  const exists = await checkConfig();
+  if (exists) {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+    
+    const overwrite = await rl.question('.necoport.yaml already exists. Overwrite? (y/N): ');
+    rl.close();
+    
+    if (overwrite.toLowerCase() !== 'y') {
+      console.log('Cancelled.');
+      return;
+    }
+  }
+  
+  console.log('🐱 Neco Porter Configuration Wizard\n');
+  
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  
+  try {
+    // プロジェクトの分析
+    const suggestions = await analyzeProject();
+    const config = {
+      version: '2.0',
+      services: {}
+    };
+    
+    // サービス名の入力
+    const serviceName = await rl.question('Service name (default: app): ') || 'app';
+    
+    // コマンドの選択または入力
+    if (suggestions.length > 0) {
+      console.log('\nDetected commands:');
+      suggestions.forEach((s, i) => {
+        console.log(`  ${i + 1}. ${s.cmd}`);
+      });
+      console.log(`  ${suggestions.length + 1}. Enter custom command`);
+      
+      const choice = await rl.question('\nSelect command (1-' + (suggestions.length + 1) + '): ');
+      const choiceNum = parseInt(choice);
+      
+      let command;
+      if (choiceNum > 0 && choiceNum <= suggestions.length) {
+        command = suggestions[choiceNum - 1].cmd;
+      } else {
+        command = await rl.question('Enter command: ');
+      }
+      
+      config.services[serviceName] = { command };
+    } else {
+      const command = await rl.question('Enter command to run: ');
+      config.services[serviceName] = { command };
+    }
+    
+    // ポート設定
+    const portConfig = await rl.question('\nPort configuration (e.g., "3000" or "web:3000,api:3001"): ');
+    if (portConfig) {
+      const ports = {};
+      if (portConfig.includes(',')) {
+        // マルチポート
+        portConfig.split(',').forEach(spec => {
+          if (spec.includes(':')) {
+            const [name, hint] = spec.split(':');
+            ports[name] = { hint: parseInt(hint) };
+          }
+        });
+      } else if (portConfig.includes(':')) {
+        // 名前付きシングルポート
+        const [name, hint] = portConfig.split(':');
+        ports[name] = { hint: parseInt(hint) };
+      } else {
+        // シンプルポート
+        ports.main = { hint: parseInt(portConfig) };
+      }
+      
+      if (Object.keys(ports).length > 0) {
+        config.services[serviceName].ports = ports;
+      }
+    }
+    
+    // 環境変数
+    const envVars = await rl.question('\nEnvironment variables (e.g., "NODE_ENV=development,DEBUG=true"): ');
+    if (envVars) {
+      const env = {};
+      envVars.split(',').forEach(pair => {
+        const [key, value] = pair.split('=');
+        if (key && value) env[key.trim()] = value.trim();
+      });
+      
+      if (Object.keys(env).length > 0) {
+        config.services[serviceName].env = env;
+      }
+    }
+    
+    // 追加サービス
+    const addMore = await rl.question('\nAdd another service? (y/N): ');
+    if (addMore.toLowerCase() === 'y') {
+      console.log('\nNote: Run "neco init" again to add more services.');
+    }
+    
+    // YAMLを保存
+    const yamlStr = yaml.dump(config, { 
+      lineWidth: -1,
+      quotingType: '"'
+    });
+    
+    await fs.writeFile(configPath, yamlStr);
+    console.log(`\n✅ Created ${configPath}`);
+    console.log('\nYou can now run:');
+    console.log(`  neco ${serviceName}     # Start the service`);
+    console.log('  neco .                # Auto-detect and start');
+    
+  } finally {
+    rl.close();
+  }
+}
+
+async function showConfig() {
+  try {
+    const config = await launcher.loadConfig();
+    if (!config) {
+      console.log('No .necoport.yaml found in current directory or parent directories.');
+      console.log('\nRun "neco init" to create one.');
+      return;
+    }
+    
+    console.log('🐱 Current configuration:\n');
+    
+    // 設定ファイルの場所を表示
+    if (config._basePath) {
+      const configPath = path.join(config._basePath, '.necoport.yaml');
+      console.log(`Config file: ${configPath}`);
+    }
+    
+    console.log(`Version: ${config.version || '1.0'}\n`);
+    
+    if (config.services && Object.keys(config.services).length > 0) {
+      console.log('Services:');
+      for (const [name, service] of Object.entries(config.services)) {
+        console.log(`\n  ${name}:`);
+        console.log(`    Command: ${service.command}`);
+        
+        if (service.ports) {
+          console.log('    Ports:');
+          for (const [portName, portConfig] of Object.entries(service.ports)) {
+            console.log(`      ${portName}: ${portConfig.hint || 'auto'}`);
+          }
+        }
+        
+        if (service.env) {
+          console.log('    Environment:');
+          for (const [key, value] of Object.entries(service.env)) {
+            console.log(`      ${key}: ${value}`);
+          }
+        }
+        
+        if (service.cwd) {
+          console.log(`    Directory: ${service.cwd}`);
+        }
+      }
+    } else {
+      console.log('No services configured.');
+    }
+    
+    console.log('\nAvailable commands:');
+    if (config.services) {
+      Object.keys(config.services).forEach(name => {
+        console.log(`  neco ${name}`);
+      });
+    }
+    console.log('  neco .        # Auto-detect and start');
+    
+  } catch (error) {
+    console.error('Error reading configuration:', error.message);
+  }
+}
 
 // メイン実行
 smartRun().catch(err => {
