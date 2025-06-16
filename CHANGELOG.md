@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2025-01-16
+
+### Added
+- 🧠 **Advanced environment variable detection** - Identifies custom PORT variables (e.g., DASHBOARD_PORT)
+- 🎯 **Smart code analysis** - Detects `process.env.CUSTOM_PORT || 3000` patterns  
+- 💡 **Precise fix suggestions** - Provides exact code changes needed
+- 🔍 **Root cause identification** - Shows exactly why apps ignore PORT variable
+
+### Enhanced
+- Port mismatch warnings now show detected environment variable patterns
+- More accurate problem diagnosis with specific variable names
+
+### Example Output
+```
+🔍 Detected app listens on: process.env.DASHBOARD_PORT || 3000
+⚠️  This app doesn't use PORT variable!
+💡 Consider: process.env.PORT || process.env.DASHBOARD_PORT || 3000
+```
+
+## [2.1.0] - 2025-01-16
+
+### Added
+- 🔧 **Environment variable debug logging** - Shows which PORT variables are set
+- ⚠️ **Port mismatch detection** - Warns when app uses hardcoded ports instead of process.env.PORT
+- 💡 **Smart code analysis** - Automatically detects hardcoded ports in source files
+- 🎯 **Helpful suggestions** - Provides specific code examples to fix port conflicts
+
+### Changed
+- Enhanced error messages with actionable advice
+- Better debugging information for troubleshooting port issues
+
+## [2.0.1] - 2025-01-16
+
+### Added
+- 🚀 **Auto-start daemon** - `neco` command now automatically starts necoportd if not running
+- No manual daemon setup required anymore!
+
+### Fixed
+- Status command routing when using config file lookup
+
 ## [2.0.0] - 2025-01-16
 
 ### Added

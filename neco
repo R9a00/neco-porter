@@ -9,6 +9,52 @@ import path from 'path';
 
 const args = process.argv.slice(2);
 
+// necoportdが起動しているかチェックして、必要なら起動
+async function ensureDaemonRunning() {
+  const daemonUrl = process.env.NECOPORTD_URL || 'http://localhost:5555';
+  const maxRetries = 5;
+  
+  // まず現在の状態をチェック
+  try {
+    const response = await fetch(`${daemonUrl}/list`);
+    if (response.ok) {
+      return true; // すでに起動している
+    }
+  } catch (error) {
+    // デーモンが起動していない
+  }
+  
+  // デーモンを起動
+  console.log('🐱 Starting necoportd daemon...');
+  
+  // Use our v2 daemon instead of global necoportd
+  const daemonPath = path.join(path.dirname(new URL(import.meta.url).pathname), 'src', 'necoportd-v2.js');
+  const daemon = spawn('node', [daemonPath], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env }
+  });
+  
+  daemon.unref();
+  
+  // デーモンの起動を待つ
+  for (let i = 0; i < maxRetries; i++) {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    try {
+      const response = await fetch(`${daemonUrl}/list`);
+      if (response.ok) {
+        console.log('✅ Daemon started successfully!');
+        return true;
+      }
+    } catch (error) {
+      // まだ起動していない
+    }
+  }
+  
+  throw new Error('Failed to start necoportd daemon. Please try starting it manually with: necoportd &');
+}
+
 // コマンドなしの場合はインタラクティブモード
 if (args.length === 0) {
   showInteractiveMenu();
@@ -17,6 +63,15 @@ if (args.length === 0) {
 
 // スマートコマンド解析
 async function smartRun() {
+  // デーモンの起動を確認（stop以外のコマンドの場合）
+  if (args[0] !== 'stop' && args[0] !== 'help' && args[0] !== '--help' && args[0] !== '-h') {
+    try {
+      await ensureDaemonRunning();
+    } catch (error) {
+      console.error('❌ Error:', error.message);
+      process.exit(1);
+    }
+  }
   const input = args.join(' ');
   
   // 特殊オプションの解析
@@ -55,7 +110,8 @@ async function smartRun() {
   }
   
   // パターン1: "neco myapp" - 設定ファイルから起動
-  if (commandArgs.length === 1 && !commandArgs[0].includes('.')) {
+  if (commandArgs.length === 1 && !commandArgs[0].includes('.') && 
+      commandArgs[0] !== 'status' && commandArgs[0] !== 'ls' && commandArgs[0] !== 'stop') {
     const hasConfig = await checkConfig();
     if (hasConfig) {
       console.log(`🐱 Starting ${commandArgs[0]} from config...`);
