@@ -110,6 +110,109 @@ export class NecoLauncher {
     return { runtime: 'unknown', command: null };
   }
 
+  // ポート不一致の検出とアドバイス
+  async checkPortMismatch(command, assignedPort, cwd) {
+    if (!assignedPort) return;
+    
+    try {
+      // コマンドからファイル名を抽出
+      const commandFiles = command.split(' ').filter(arg => 
+        arg.endsWith('.js') || arg.endsWith('.cjs') || arg.endsWith('.mjs') ||
+        arg.endsWith('.ts') || arg.endsWith('.py')
+      );
+      
+      // よくあるファイルパターンでハードコードされたポートを検索
+      const filesToCheck = [
+        ...commandFiles, // コマンドで指定されたファイルを優先
+        'server.js', 'app.js', 'index.js', 'main.js',
+        'src/server.js', 'src/app.js', 'src/index.js',
+        'package.json'
+      ];
+      
+      const hardcodedPorts = new Set();
+      
+      for (const file of filesToCheck) {
+        const filePath = path.join(cwd, file);
+        try {
+          const content = await fs.readFile(filePath, 'utf8');
+          
+          // よくあるポート番号パターンを検索
+          const portPatterns = [
+            /\.listen\s*\(\s*(\d{3,4})\s*\)/g,
+            /port\s*[=:]\s*(\d{3,4})/gi,
+            /PORT\s*[=:]\s*(\d{3,4})/g,
+            /const\s+port\s*=\s*(\d{3,4})/gi,
+            /let\s+port\s*=\s*(\d{3,4})/gi,
+            /var\s+port\s*=\s*(\d{3,4})/gi
+          ];
+          
+          // 環境変数パターンの検索（process.env.XXX_PORT || 3000 のようなパターン）
+          const envPortPatterns = [
+            /process\.env\.([A-Z_]*PORT[A-Z_]*)\s*\|\|\s*(\d{3,4})/gi,
+            /process\.env\[['"]([A-Z_]*PORT[A-Z_]*)['"]]\s*\|\|\s*(\d{3,4})/gi
+          ];
+          
+          let detectedEnvVars = new Set();
+          
+          for (const pattern of portPatterns) {
+            let match;
+            while ((match = pattern.exec(content)) !== null) {
+              const port = parseInt(match[1]);
+              if (port >= 3000 && port <= 9999) {
+                hardcodedPorts.add(port);
+              }
+            }
+          }
+          
+          // 環境変数の使用パターンを検出
+          for (const pattern of envPortPatterns) {
+            let match;
+            while ((match = pattern.exec(content)) !== null) {
+              const envVar = match[1];
+              const fallbackPort = parseInt(match[2]);
+              if (envVar !== 'PORT') {
+                detectedEnvVars.add(envVar);
+              }
+              if (fallbackPort >= 3000 && fallbackPort <= 9999) {
+                hardcodedPorts.add(fallbackPort);
+              }
+            }
+          }
+          
+          // よくあるポート変数を保存
+          if (detectedEnvVars.size > 0) {
+            this._detectedEnvVars = Array.from(detectedEnvVars);
+          }
+        } catch {
+          // ファイルが存在しない場合は無視
+        }
+      }
+      
+      // 不一致を検出
+      for (const hardcodedPort of hardcodedPorts) {
+        if (hardcodedPort !== assignedPort) {
+          console.log(`⚠️  Port mismatch detected:`);
+          console.log(`   App may use hardcoded port: ${hardcodedPort}`);
+          console.log(`   Neco Porter assigned: ${assignedPort}`);
+          
+          // 検出された環境変数がある場合の高度なアドバイス
+          if (this._detectedEnvVars && this._detectedEnvVars.length > 0) {
+            console.log(`🔍 Detected app listens on: process.env.${this._detectedEnvVars[0]} || ${hardcodedPort}`);
+            console.log(`⚠️  This app doesn't use PORT variable!`);
+            console.log(`💡 Consider: process.env.PORT || process.env.${this._detectedEnvVars[0]} || ${hardcodedPort}`);
+          } else {
+            console.log(`💡 Tip: Use process.env.PORT in your app:`);
+            console.log(`   app.listen(process.env.PORT || ${hardcodedPort})`);
+          }
+          console.log();
+          break;
+        }
+      }
+    } catch (error) {
+      // 検出エラーは無視
+    }
+  }
+
   // サービスの起動
   async startService(name, options = {}) {
     let {
@@ -143,7 +246,7 @@ export class NecoLauncher {
     let reservedPorts;
     if (Object.keys(ports).length > 0) {
       reservedPorts = await reserve(name, { ports });
-      console.log('📦 Reserved ports:', reservedPorts);
+      console.log('📦 Reserved ports:', Object.entries(reservedPorts).map(([k,v]) => `${k}:${v}`).join(', '));
     } else {
       reservedPorts = { main: await reserve(name) };
       console.log(`📦 Reserved port: ${reservedPorts.main}`);
@@ -152,9 +255,17 @@ export class NecoLauncher {
     // 環境変数の準備
     const serviceEnv = {
       ...process.env,
-      ...env,
-      PORT: reservedPorts.main || reservedPorts[Object.keys(reservedPorts)[0]]
+      ...env
     };
+    
+    // ポート環境変数の設定
+    if (typeof reservedPorts === 'object' && reservedPorts !== null) {
+      // マルチポートの場合
+      serviceEnv.PORT = reservedPorts.main || reservedPorts[Object.keys(reservedPorts)[0]];
+    } else {
+      // 単一ポートの場合
+      serviceEnv.PORT = reservedPorts;
+    }
 
     // 名前付きポートの環境変数
     for (const [portName, portValue] of Object.entries(reservedPorts)) {
@@ -163,7 +274,28 @@ export class NecoLauncher {
         serviceEnv[envName] = portValue;
       }
     }
+    
+    // 設定ファイルの環境変数を上書き（優先）
+    if (env) {
+      for (const [key, value] of Object.entries(env)) {
+        serviceEnv[key] = value;
+      }
+    }
+    
+    // 環境変数デバッグ情報を表示
+    console.log('🔧 Environment variables set:');
+    console.log(`  PORT: ${serviceEnv.PORT}`);
+    
+    // ポート関連の環境変数を表示
+    for (const [key, value] of Object.entries(serviceEnv)) {
+      if (key.startsWith('PORT_') || key.includes('PORT')) {
+        console.log(`  ${key}: ${value}`);
+      }
+    }
 
+    // ポート不一致の検出とアドバイス
+    await this.checkPortMismatch(command, serviceEnv.PORT, cwd);
+    
     // コマンドの実行
     const [cmd, ...args] = command.split(' ');
     const child = spawn(cmd, args, {

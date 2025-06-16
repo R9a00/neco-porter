@@ -214,3 +214,8 @@ Cargo.lock
 .sass-cache/
 .connect.lock
 .lock-wscript
+
+# Neco Porter specific
+.necoportd.json
+.necoport-state.json
+DEVELOPMENT_NOTES.md

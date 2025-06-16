@@ -52,6 +52,8 @@ cd your-project
 neco .
 ```
 
+🎉 **No daemon setup needed!** The `neco` command automatically starts the daemon if it's not running.
+
 The `neco` command will:
 1. 🔍 Detect your project type (Node.js, Python, Ruby, etc.)
 2. 📋 Find the right startup command
