@@ -4,11 +4,11 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import net from 'net';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 import getPort from 'get-port';
 import os from 'os';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const range = process.env.NECOPORT_RANGE?.split('-').map(Number) || [3000, 3999];
 const statePath = process.env.NECOPORT_STATE || 
   path.join(os.homedir(), '.necoportd.json');
@@ -95,7 +95,12 @@ app.post('/reserve', async (req, res) => {
       Object.values(db).some(v => v.port === port && isProcessAlive(v.pid))) {
     let attempts = 0;
     do {
-      port = await getPort({ port: getPort.makeRange(...range) });
+      // Generate array of ports in range
+      const ports = [];
+      for (let p = range[0]; p <= range[1]; p++) {
+        ports.push(p);
+      }
+      port = await getPort({ port: ports });
       attempts++;
       if (attempts > 100) {
         return res.status(503).json({ 
